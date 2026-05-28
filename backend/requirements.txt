@@ -1,0 +1,25 @@
+# Web framework
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+
+# ORM & DB drivers
+SQLAlchemy==2.0.35
+# Uncomment when migrating to PostgreSQL (architecture.md - Future Scalability)
+# psycopg2-binary==2.9.9
+
+# Validation & settings
+pydantic==2.9.2
+pydantic-settings==2.5.2
+email-validator==2.2.0
+
+# Auth (JWT + password hashing)
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+# bcrypt is pinned because passlib 1.7.4 is incompatible with bcrypt >= 4.1
+# (removed __about__ attribute + stricter 72-byte check breaks passlib's
+# backend init "detect_wrap_bug" probe). 4.0.1 is the last known-good version.
+bcrypt==4.0.1
+python-multipart==0.0.12
+
+# Env file loading
+python-dotenv==1.0.1

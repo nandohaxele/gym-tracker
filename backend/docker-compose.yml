@@ -1,0 +1,32 @@
+# Backend docker-compose
+# TODO: For dev, only the `api` service is required (SQLite is file-based).
+#       To switch to PostgreSQL, uncomment the `db` service and update DATABASE_URL.
+
+services:
+  api:
+    build: .
+    container_name: gym_api
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+    # depends_on:
+    #   - db
+
+  # db:
+  #   image: postgres:16-alpine
+  #   container_name: gym_db
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_USER: gym
+  #     POSTGRES_PASSWORD: gym
+  #     POSTGRES_DB: gym
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - gym_pg_data:/var/lib/postgresql/data
+
+# volumes:
+#   gym_pg_data:

@@ -1,0 +1,171 @@
+# =============================================================================
+# Gym Tracker App - root .gitignore
+# Covers Python (backend), Node/Vite (frontend), OS/IDE noise, and project
+# specific artifacts. Sub-folders may have their own .gitignore as well;
+# Git unions all rules across the tree.
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# Secrets & local environment
+# -----------------------------------------------------------------------------
+# Never commit real secrets. Always commit a redacted .env.example instead.
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+
+# -----------------------------------------------------------------------------
+# Python (backend)
+# -----------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+pyvenv.cfg
+
+# Packaging / build
+build/
+dist/
+*.egg
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Test, coverage, linters, type checkers
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.pytype/
+
+
+# -----------------------------------------------------------------------------
+# Databases (local SQLite + dumps)
+# -----------------------------------------------------------------------------
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.sql.gz
+*.dump
+
+
+# -----------------------------------------------------------------------------
+# Node / Vite (frontend)
+# -----------------------------------------------------------------------------
+node_modules/
+.npm/
+.pnp/
+.pnp.*
+.yarn/cache
+.yarn/install-state.gz
+.pnpm-store/
+
+# Build output
+dist/
+dist-ssr/
+build/
+.vite/
+.next/
+.nuxt/
+out/
+.svelte-kit/
+
+# TypeScript / bundler caches
+*.tsbuildinfo
+.turbo/
+.parcel-cache/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Test / coverage
+coverage/
+.nyc_output/
+
+# Vite / runtime env files copied locally
+*.local
+
+
+# -----------------------------------------------------------------------------
+# Docker
+# -----------------------------------------------------------------------------
+# Keep Dockerfile and docker-compose.yml (they ARE source). Ignore volumes/data.
+docker-data/
+.docker/
+
+
+# -----------------------------------------------------------------------------
+# Editors / IDEs
+# -----------------------------------------------------------------------------
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# Cursor (workspace-local config the agent may write)
+.cursor/
+
+
+# -----------------------------------------------------------------------------
+# OS noise
+# -----------------------------------------------------------------------------
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+
+
+# -----------------------------------------------------------------------------
+# Misc
+# -----------------------------------------------------------------------------
+*.bak
+*.tmp
+*.old
+*.orig
+*.rej

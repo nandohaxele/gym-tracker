@@ -1,0 +1,254 @@
+/* Global, mobile-first base styles.
+ * Target device: Galaxy S21 (360x800).
+ * TODO: Refine typography and spacing once components are built out.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+a {
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+/* ---- Layout shell ---- */
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  padding-top: env(safe-area-inset-top);
+}
+
+.app-shell__content {
+  flex: 1;
+  padding: var(--space-4);
+  padding-bottom: calc(var(--space-8) + env(safe-area-inset-bottom));
+}
+
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.app-header__brand {
+  font-weight: 600;
+}
+
+.app-header__actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.bottom-nav {
+  display: flex;
+  position: sticky;
+  bottom: 0;
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.bottom-nav__item {
+  flex: 1;
+  text-align: center;
+  padding: var(--space-3);
+  min-height: 56px;
+  color: var(--color-text);
+}
+
+/* ---- Page containers ---- */
+
+.page {
+  max-width: 480px;
+  margin: 0 auto;
+}
+
+.page__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-4);
+}
+
+.page--auth,
+.page--center {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-4);
+  padding-top: var(--space-8);
+}
+
+/* ---- Buttons ---- */
+
+.btn {
+  min-height: var(--tap-target);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.btn--primary {
+  background: var(--color-primary);
+  color: var(--color-primary-contrast);
+  border-color: transparent;
+}
+
+.btn--ghost {
+  background: transparent;
+  border-color: transparent;
+}
+
+/* ---- Forms ---- */
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.form input,
+.field input {
+  min-height: var(--tap-target);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+}
+
+.form__error,
+.field__error {
+  color: var(--color-danger);
+  font-size: 0.875rem;
+}
+
+/* ---- Workouts ---- */
+
+.workout-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.workout-card {
+  display: block;
+  padding: var(--space-4);
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  color: var(--color-text);
+}
+
+.workout-card__title {
+  font-weight: 600;
+}
+
+.workout-card__meta {
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+.empty {
+  color: var(--color-text-muted);
+  text-align: center;
+  padding: var(--space-8) var(--space-4);
+}
+
+/* ---- Set row ---- */
+
+.set-row {
+  display: grid;
+  grid-template-columns: auto 1fr 1fr auto;
+  gap: var(--space-2);
+  align-items: center;
+  padding: var(--space-2) 0;
+}
+
+.set-row__index {
+  width: 24px;
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
+/* ---- Rest timer ---- */
+
+.rest-timer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3);
+  background: var(--color-surface-2);
+  border-radius: var(--radius-md);
+}
+
+.rest-timer__display {
+  font-variant-numeric: tabular-nums;
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.rest-timer__controls {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* ---- Modal (bottom sheet) ---- */
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+}
+
+.modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.modal__sheet {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--color-bg);
+  border-top-left-radius: var(--radius-lg);
+  border-top-right-radius: var(--radius-lg);
+  padding: var(--space-4);
+  padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom));
+  max-height: 85dvh;
+  overflow-y: auto;
+}
