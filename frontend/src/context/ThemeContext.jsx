@@ -1,30 +1,66 @@
-// Theme context: light / dark, persisted in localStorage.
-// Applies data-theme attribute on <html> so theme.css variables switch.
+// Theme context: 'light' | 'dark' | 'system'.
+// - Persists the preference in localStorage (key 'gym.theme').
+// - Resolves 'system' against prefers-color-scheme and reacts to OS changes.
+// - Applies the `.dark` class on <html> (Tailwind darkMode: 'class').
+// The anti-FOUC script in index.html mirrors this logic for the first paint.
 
-import { createContext, useEffect, useState } from 'react';
+import { createContext, useCallback, useEffect, useMemo, useState } from 'react';
 import { getTheme, setTheme as persistTheme } from '../utils/storage.js';
 
 export const ThemeContext = createContext(null);
 
-const DEFAULT_THEME = 'light';
+const THEMES = ['light', 'dark', 'system'];
+const DARK_QUERY = '(prefers-color-scheme: dark)';
+
+function getSystemTheme() {
+  if (typeof window === 'undefined' || !window.matchMedia) return 'light';
+  return window.matchMedia(DARK_QUERY).matches ? 'dark' : 'light';
+}
+
+function resolve(theme, systemTheme) {
+  return theme === 'system' ? systemTheme : theme;
+}
 
 export function ThemeProvider({ children }) {
-  // TODO: read initial theme from storage; fall back to prefers-color-scheme.
-  const [theme, setTheme] = useState(() => getTheme() || DEFAULT_THEME);
+  const [theme, setThemeState] = useState(() => {
+    const stored = getTheme();
+    return THEMES.includes(stored) ? stored : 'system';
+  });
+  const [systemTheme, setSystemTheme] = useState(getSystemTheme);
 
+  // Keep systemTheme in sync with the OS when the user follows the system.
   useEffect(() => {
-    // TODO: apply data-theme on <html>, persist to localStorage.
-    document.documentElement.setAttribute('data-theme', theme);
+    if (!window.matchMedia) return undefined;
+    const mql = window.matchMedia(DARK_QUERY);
+    const onChange = (e) => setSystemTheme(e.matches ? 'dark' : 'light');
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
+  }, []);
+
+  const resolvedTheme = resolve(theme, systemTheme);
+
+  // Apply the resolved theme to <html> and persist the preference.
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', resolvedTheme === 'dark');
     persistTheme(theme);
-  }, [theme]);
+  }, [theme, resolvedTheme]);
 
-  const toggleTheme = () => {
-    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
-  };
+  const setTheme = useCallback((next) => {
+    if (THEMES.includes(next)) setThemeState(next);
+  }, []);
 
-  return (
-    <ThemeContext.Provider value={{ theme, toggleTheme, setTheme }}>
-      {children}
-    </ThemeContext.Provider>
+  // Cycle: light -> dark -> system -> light.
+  const toggleTheme = useCallback(() => {
+    setThemeState((prev) => {
+      const idx = THEMES.indexOf(prev);
+      return THEMES[(idx + 1) % THEMES.length];
+    });
+  }, []);
+
+  const value = useMemo(
+    () => ({ theme, resolvedTheme, setTheme, toggleTheme }),
+    [theme, resolvedTheme, setTheme, toggleTheme]
   );
+
+  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }

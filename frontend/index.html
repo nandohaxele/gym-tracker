@@ -8,9 +8,34 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
-    <meta name="theme-color" content="#0f172a" />
+    <meta name="theme-color" content="#0a0a0b" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
     <meta name="description" content="Gym Tracker - simple workout tracking" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+
     <title>Gym Tracker</title>
+
+    <!-- Anti-FOUC: apply the persisted/system theme before React mounts so the
+         first paint already has the correct light/dark background. Keep this in
+         sync with src/context/ThemeContext.jsx (key + values). -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('gym.theme'); // 'light' | 'dark' | 'system' | null
+          var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var isDark = stored === 'dark' || ((stored === 'system' || !stored) && prefersDark);
+          document.documentElement.classList.toggle('dark', isDark);
+        } catch (e) {
+          /* localStorage unavailable (private mode) - default to light */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

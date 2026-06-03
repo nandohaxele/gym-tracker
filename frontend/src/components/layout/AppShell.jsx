@@ -1,18 +1,19 @@
-// AppShell - layout for protected routes: header on top, page content, bottom nav.
-// Mobile-first container sized for Galaxy S21 (360x800) but works wider.
+// AppShell - layout for protected routes: sticky header, scrollable content,
+// sticky bottom navigation. Mobile-first, safe-area aware (Galaxy S21 / notch).
 
 import { Outlet } from 'react-router-dom';
 import Header from './Header.jsx';
 import BottomNav from './BottomNav.jsx';
 
 export default function AppShell() {
-  // TODO: Wrap children in safe-area-aware container.
   return (
-    <div className="app-shell">
+    <div className="flex min-h-dvh flex-col bg-background">
       <Header />
-      <div className="app-shell__content">
+
+      <main className="flex-1 animate-fade-in pb-24 pt-4">
         <Outlet />
-      </div>
+      </main>
+
       <BottomNav />
     </div>
   );

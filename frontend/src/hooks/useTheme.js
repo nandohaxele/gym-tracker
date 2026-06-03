@@ -1,9 +1,12 @@
-// useTheme - thin hook that consumes ThemeContext.
+// useTheme - consume ThemeContext. Throws if used outside <ThemeProvider>.
 
 import { useContext } from 'react';
 import { ThemeContext } from '../context/ThemeContext.jsx';
 
 export default function useTheme() {
-  // TODO: throw if used outside <ThemeProvider>?
-  return useContext(ThemeContext);
+  const ctx = useContext(ThemeContext);
+  if (ctx === null) {
+    throw new Error('useTheme must be used within a <ThemeProvider>');
+  }
+  return ctx;
 }

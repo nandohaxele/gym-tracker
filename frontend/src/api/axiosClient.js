@@ -13,7 +13,6 @@ const axiosClient = axios.create({
 
 // Request interceptor: attach JWT bearer if present.
 axiosClient.interceptors.request.use((config) => {
-  // TODO: read token from storage and attach to Authorization header.
   const token = getToken();
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
@@ -24,8 +23,7 @@ axiosClient.interceptors.request.use((config) => {
 // Response interceptor: unwrap {success, data, error} and handle 401 globally.
 axiosClient.interceptors.response.use(
   (response) => {
-    // TODO: Per api_contract.md the body is { success, data, error }.
-    //       Return response.data.data on success, throw response.data.error on failure.
+    // Per api_contract.md the body is { success, data, error }.
     const body = response.data;
     if (body && typeof body === 'object' && 'success' in body) {
       if (body.success) return body.data;
@@ -34,10 +32,13 @@ axiosClient.interceptors.response.use(
     return body;
   },
   (error) => {
-    // TODO: On 401, clear the stored token and redirect to /login.
+    // On 401, drop the stored token and signal the app so AuthContext can
+    // reset state and route guards can redirect to /login.
     if (error.response?.status === 401) {
       clearToken();
-      // TODO: trigger a redirect or auth-context logout signal.
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('auth:unauthorized'));
+      }
     }
     const apiError = error.response?.data?.error;
     return Promise.reject(new Error(apiError || error.message));

@@ -1,9 +1,12 @@
-// useAuth - thin hook that consumes AuthContext.
+// useAuth - consume AuthContext. Throws if used outside <AuthProvider>.
 
 import { useContext } from 'react';
 import { AuthContext } from '../context/AuthContext.jsx';
 
 export default function useAuth() {
-  // TODO: throw if used outside <AuthProvider>?
-  return useContext(AuthContext);
+  const ctx = useContext(AuthContext);
+  if (ctx === null) {
+    throw new Error('useAuth must be used within an <AuthProvider>');
+  }
+  return ctx;
 }
