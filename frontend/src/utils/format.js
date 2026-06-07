@@ -17,3 +17,17 @@ export function formatWeight(kg, unit = 'kg') {
   if (kg == null) return '';
   return `${kg} ${unit}`;
 }
+
+/**
+ * toDateInputValue - normalize a Date | ISO string | timestamp into the
+ * `YYYY-MM-DD` string expected by <input type="date"> and the backend.
+ * Falls back to today's local date when the value is missing/invalid.
+ */
+export function toDateInputValue(value) {
+  const d = value ? new Date(value) : new Date();
+  const safe = Number.isNaN(d.getTime()) ? new Date() : d;
+  const year = safe.getFullYear();
+  const month = String(safe.getMonth() + 1).padStart(2, '0');
+  const day = String(safe.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}

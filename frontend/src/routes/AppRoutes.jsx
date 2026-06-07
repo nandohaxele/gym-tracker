@@ -46,7 +46,6 @@ export default function AppRoutes() {
       >
         <Route index element={<Navigate to="/home" replace />} />
         <Route path="/home" element={<HomePage />} />
-        {/* TODO (Phase 5 Step 2+): real workout list / editor / detail UIs. */}
         <Route path="/workouts/new" element={<WorkoutEditorPage />} />
         <Route path="/workouts/:id" element={<WorkoutDetailPage />} />
         <Route path="/workouts/:id/edit" element={<WorkoutEditorPage />} />
