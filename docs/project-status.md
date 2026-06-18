@@ -17,7 +17,7 @@
 * Mobile Layout
 * Protected Routes
 
-## Current Phase
+## Completed Phase
 
 Phase 5 Step 2
 
@@ -27,7 +27,7 @@ Goals:
 * Workout Editor
 * Workout Detail
 
-## Next Phase
+## Current Phase
 
 Phase 5 Step 3
 
