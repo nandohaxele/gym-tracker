@@ -105,6 +105,7 @@ export default function WorkoutEditorPage() {
           onSubmit={handleSubmit}
           onCancel={handleCancel}
           submitLabel={isEdit ? 'Save changes' : 'Create workout'}
+          openDateOnMount={!isEdit}
         />
       ) : null}
     </PageContainer>

@@ -43,8 +43,11 @@ export default function ExercisePicker({ onPick, onClose, selectedIds = [] }) {
   const selected = new Set(selectedIds);
 
   return (
-    <Modal open title="Add exercise" onClose={onClose}>
-      <div className="flex flex-col">
+    // Fixed (dvh-based) height keeps the sheet from collapsing to the size of a
+    // short result list and adapts when the Android keyboard shrinks the
+    // viewport -- the sticky search + first match stay anchored at the top.
+    <Modal open title="Add exercise" onClose={onClose} className="h-[85dvh]">
+      <div className="flex min-h-full flex-col">
         <div className="sticky top-0 z-10 border-b border-border bg-card p-4">
           <div className="relative">
             <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-muted-foreground">

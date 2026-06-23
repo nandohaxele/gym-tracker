@@ -1,14 +1,15 @@
 // Display formatters. Keep i18n-ready (use Intl APIs).
 
 export function formatDate(value) {
-  // TODO: accept Date | string | number; return locale-aware short date.
+  // Italian-friendly numeric format (dd/MM/yyyy), e.g. 19/06/2026.
+  // Note: native <input type="date"> stays browser-locale driven on purpose.
   if (!value) return '';
   const d = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(d.getTime())) return '';
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat('it-IT', {
+    day: '2-digit',
+    month: '2-digit',
     year: 'numeric',
-    month: 'short',
-    day: 'numeric',
   }).format(d);
 }
 

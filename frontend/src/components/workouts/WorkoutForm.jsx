@@ -3,7 +3,7 @@
 // nested field array of sets), validation via the shared zod workoutSchema, and
 // transforms form values into the backend payload before delegating to onSubmit.
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { AlertCircle, Dumbbell, Plus } from 'lucide-react';
@@ -13,6 +13,21 @@ import AppInput from '@/components/ui/AppInput.jsx';
 import AppButton from '@/components/ui/AppButton.jsx';
 import ExerciseFieldCard from './ExerciseFieldCard.jsx';
 import ExercisePicker from './ExercisePicker.jsx';
+
+// Quick-pick presets for the workout name. Users can tap one or ignore them and
+// type any custom name -- these only prefill the free-text field.
+const NAME_SUGGESTIONS = [
+  'Push Day',
+  'Pull Day',
+  'Leg Day',
+  'Upper',
+  'Lower',
+  'Full Body',
+  'Arms',
+  'Chest',
+  'Back',
+  'Shoulders',
+];
 
 // Map validated form values -> backend WorkoutCreate/WorkoutUpdate payload.
 // order_index is derived from array position; UI-only fields are dropped.
@@ -37,19 +52,51 @@ export default function WorkoutForm({
   onSubmit,
   onCancel,
   submitLabel = 'Save workout',
+  openDateOnMount = false,
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [serverError, setServerError] = useState(null);
+  const [showNameSuggestions, setShowNameSuggestions] = useState(false);
 
   const {
     register,
     control,
     handleSubmit,
+    setValue,
     formState: { errors, isSubmitting },
   } = useForm({
     resolver: zodResolver(workoutSchema),
     defaultValues,
   });
+
+  const nameField = register('name');
+
+  const applyNameSuggestion = (suggestion) => {
+    setValue('name', suggestion, { shouldValidate: true, shouldDirty: true });
+  };
+
+  // Keep RHF's ref while also holding our own so we can open the native picker.
+  const dateField = register('date');
+  const dateInputRef = useRef(null);
+  const setDateRef = (el) => {
+    dateField.ref(el);
+    dateInputRef.current = el;
+  };
+
+  // On the New Workout page, open the date picker right away so picking a date
+  // is the first thing the user does after tapping "New".
+  useEffect(() => {
+    if (!openDateOnMount) return;
+    const el = dateInputRef.current;
+    if (!el || typeof el.showPicker !== 'function') return;
+    try {
+      el.showPicker();
+    } catch {
+      // showPicker() needs transient user activation; if it has expired the
+      // browser throws -- fall back to focusing the field instead.
+      el.focus();
+    }
+  }, [openDateOnMount]);
 
   const { fields, append, remove } = useFieldArray({
     control,
@@ -92,18 +139,49 @@ export default function WorkoutForm({
       )}
 
       <div className="flex flex-col gap-4">
-        <AppInput
-          label="Workout name"
-          placeholder="e.g. Push day"
-          autoComplete="off"
-          error={errors.name?.message}
-          {...register('name')}
-        />
+        <div className="flex flex-col gap-2">
+          <AppInput
+            label="Workout name"
+            placeholder="e.g. Push Day"
+            autoComplete="off"
+            error={errors.name?.message}
+            {...nameField}
+            onFocus={() => setShowNameSuggestions(true)}
+            onBlur={(e) => {
+              nameField.onBlur(e);
+              setShowNameSuggestions(false);
+            }}
+          />
+
+          {showNameSuggestions && (
+            <div
+              role="listbox"
+              aria-label="Workout name suggestions"
+              className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            >
+              {NAME_SUGGESTIONS.map((suggestion) => (
+                <button
+                  key={suggestion}
+                  type="button"
+                  // Prevent the input's blur from firing before the click so the
+                  // tap registers and focus (and the chip row) stays put.
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => applyNameSuggestion(suggestion)}
+                  className="shrink-0 whitespace-nowrap rounded-full border border-input bg-secondary px-3.5 py-2 text-sm font-medium text-secondary-foreground transition-colors hover:bg-accent active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {suggestion}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
         <AppInput
           label="Date"
           type="date"
           error={errors.date?.message}
-          {...register('date')}
+          {...dateField}
+          ref={setDateRef}
         />
       </div>
 

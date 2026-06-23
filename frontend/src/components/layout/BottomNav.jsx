@@ -23,11 +23,17 @@ function NavItem({ to, icon: Icon, label }) {
   );
 }
 
-export default function BottomNav() {
+// `floating` (default) pins the nav to the viewport bottom. Pages that need the
+// full height for editing (e.g. the workout editor) pass floating={false} so the
+// nav flows after the content instead of covering it.
+export default function BottomNav({ floating = true }) {
   return (
     <nav
       aria-label="Primary"
-      className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-background/90 pb-safe backdrop-blur-md"
+      className={cn(
+        'border-t border-border bg-background/90 pb-safe backdrop-blur-md',
+        floating ? 'fixed inset-x-0 bottom-0 z-30' : 'mt-auto w-full'
+      )}
     >
       <div className="mx-auto flex w-full max-w-md items-stretch px-2">
         <NavItem to="/home" icon={Home} label="Home" />
