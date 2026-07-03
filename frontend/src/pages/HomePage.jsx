@@ -24,7 +24,7 @@ export default function HomePage() {
     <PageContainer className="flex flex-col gap-6">
       <header className="flex items-center justify-between gap-3">
         <div className="flex flex-col gap-1">
-          <p className="text-sm text-muted-foreground">Welcome back,</p>
+          <p className="text-sm text-muted-foreground">Welcome back Soldier!</p>
           <h1 className="text-2xl font-bold capitalize tracking-tight">{name}</h1>
         </div>
         {workouts?.length > 0 && (

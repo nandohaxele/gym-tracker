@@ -1,6 +1,11 @@
-// Modal - mobile-first bottom sheet (slides up from the bottom on phones,
-// centers into a card on larger screens). Closes on backdrop click + Escape
-// and locks body scroll while open.
+// Modal - mobile-first sheet, centered card on larger screens. Closes on
+// backdrop click + Escape and locks body scroll while open.
+//
+// `anchor` controls the mobile position (desktop is always centered):
+//   - 'bottom' (default): classic bottom sheet sliding up from the bottom.
+//   - 'top': sheet pinned to the top of the viewport. Use for search-driven
+//     content so the header/input stays put while the sheet grows/shrinks
+//     downward with its results (collapsing bottom-up, keyboard-friendly).
 //
 // TODO (Phase 5 Step 3 polish): full focus trap + return-focus on close.
 
@@ -8,7 +13,14 @@ import { useEffect } from 'react';
 import { X } from 'lucide-react';
 import { cn } from '@/lib/utils.js';
 
-export default function Modal({ open, onClose, title, children, className }) {
+export default function Modal({
+  open,
+  onClose,
+  title,
+  children,
+  className,
+  anchor = 'bottom',
+}) {
   useEffect(() => {
     if (!open) return undefined;
 
@@ -30,7 +42,10 @@ export default function Modal({ open, onClose, title, children, className }) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center sm:items-center"
+      className={cn(
+        'fixed inset-0 z-50 flex justify-center sm:items-center',
+        anchor === 'top' ? 'items-start' : 'items-end'
+      )}
       role="dialog"
       aria-modal="true"
       aria-label={title}
@@ -43,8 +58,10 @@ export default function Modal({ open, onClose, title, children, className }) {
       <div
         className={cn(
           'relative flex max-h-[85dvh] w-full max-w-md flex-col overflow-hidden',
-          'rounded-t-2xl border border-border bg-card shadow-2xl animate-scale-in',
-          'pb-safe sm:rounded-2xl',
+          'border border-border bg-card shadow-2xl animate-scale-in sm:rounded-2xl',
+          anchor === 'top'
+            ? 'rounded-b-2xl pt-safe sm:pt-0'
+            : 'rounded-t-2xl pb-safe',
           className
         )}
       >

@@ -3,7 +3,7 @@
 // nested field array of sets), validation via the shared zod workoutSchema, and
 // transforms form values into the backend payload before delegating to onSubmit.
 
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { AlertCircle, Dumbbell, Plus } from 'lucide-react';
@@ -52,7 +52,6 @@ export default function WorkoutForm({
   onSubmit,
   onCancel,
   submitLabel = 'Save workout',
-  openDateOnMount = false,
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [serverError, setServerError] = useState(null);
@@ -74,29 +73,6 @@ export default function WorkoutForm({
   const applyNameSuggestion = (suggestion) => {
     setValue('name', suggestion, { shouldValidate: true, shouldDirty: true });
   };
-
-  // Keep RHF's ref while also holding our own so we can open the native picker.
-  const dateField = register('date');
-  const dateInputRef = useRef(null);
-  const setDateRef = (el) => {
-    dateField.ref(el);
-    dateInputRef.current = el;
-  };
-
-  // On the New Workout page, open the date picker right away so picking a date
-  // is the first thing the user does after tapping "New".
-  useEffect(() => {
-    if (!openDateOnMount) return;
-    const el = dateInputRef.current;
-    if (!el || typeof el.showPicker !== 'function') return;
-    try {
-      el.showPicker();
-    } catch {
-      // showPicker() needs transient user activation; if it has expired the
-      // browser throws -- fall back to focusing the field instead.
-      el.focus();
-    }
-  }, [openDateOnMount]);
 
   const { fields, append, remove } = useFieldArray({
     control,
@@ -180,8 +156,7 @@ export default function WorkoutForm({
           label="Date"
           type="date"
           error={errors.date?.message}
-          {...dateField}
-          ref={setDateRef}
+          {...register('date')}
         />
       </div>
 

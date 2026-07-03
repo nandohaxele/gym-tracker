@@ -43,10 +43,19 @@ export default function ExercisePicker({ onPick, onClose, selectedIds = [] }) {
   const selected = new Set(selectedIds);
 
   return (
-    // Fixed (dvh-based) height keeps the sheet from collapsing to the size of a
-    // short result list and adapts when the Android keyboard shrinks the
-    // viewport -- the sticky search + first match stay anchored at the top.
-    <Modal open title="Add exercise" onClose={onClose} className="h-[85dvh]">
+    // Mobile: top-anchored sheet whose height tracks the results (capped at
+    // 75dvh, scrollable beyond that). The search bar keeps a fixed on-screen
+    // position while the sheet collapses bottom-up when a query narrows the
+    // list, so a single match yields a compact modal with no dead space --
+    // and stays visible above the Android keyboard.
+    // Desktop (sm+): unchanged fixed-height centered card.
+    <Modal
+      open
+      title="Add exercise"
+      onClose={onClose}
+      anchor="top"
+      className="max-h-[75dvh] sm:h-[85dvh] sm:max-h-[85dvh]"
+    >
       <div className="flex min-h-full flex-col">
         <div className="sticky top-0 z-10 border-b border-border bg-card p-4">
           <div className="relative">
