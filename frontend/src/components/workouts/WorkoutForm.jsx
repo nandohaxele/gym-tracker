@@ -16,17 +16,18 @@ import ExercisePicker from './ExercisePicker.jsx';
 
 // Quick-pick presets for the workout name. Users can tap one or ignore them and
 // type any custom name -- these only prefill the free-text field.
+// TODO - Suggettions passed by the database..
 const NAME_SUGGESTIONS = [
-  'Push Day',
-  'Pull Day',
+  'Chest Day',
   'Leg Day',
-  'Upper',
-  'Lower',
-  'Full Body',
-  'Arms',
-  'Chest',
-  'Back',
-  'Shoulders',
+  'Back Day',
+  'Arms Day',
+  'Shoulders Day',
+  'Biceps and Triceps Day',
+  'Calf Day',
+  'Powerlifting Day',
+  'Abs',
+  'Stretching'
 ];
 
 // Map validated form values -> backend WorkoutCreate/WorkoutUpdate payload.
