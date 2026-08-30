@@ -5,13 +5,15 @@
 > *actually implemented today*, the *locked* domain decisions that must not be re-litigated, the known
 > technical debt, and the exact next task.
 >
-> **Snapshot date:** 2026-08-30 · **Branch:** `main` · **HEAD:** `5f29df5` ("[ADD] - AI handoff documentation")
+> **Branch:** `main` · **Last verified:** 2026-08-30
 >
-> ⚠️ **The Phase 1 (Alembic) change is present in the working tree but NOT yet committed** at the time
-> of writing. `git status` shows modifications to `README.md`, `backend/.gitignore`,
-> `backend/Dockerfile`, `backend/start.bat`, `backend/requirements.txt`, `backend/app/main.py`,
-> `backend/scripts/seed_db.py`, plus the new untracked `backend/alembic.ini` and `backend/alembic/`.
-> Everything described in §2 and §5 below reflects the **working tree**, not HEAD alone.
+> **Project state:** **Phase 1 — Alembic Foundation: COMPLETED.** Alembic owns schema evolution,
+> baseline revision **`f3f47238398b`**, existing data preserved (§2.9).
+> **Next task: Phase 2 — Exercise Domain** (§7).
+>
+> This document deliberately records **no commit hash**. Git is the source of truth for revision
+> history — run `git log`/`git status` if you need it. Describe state semantically here so this file
+> does not need editing after every commit.
 >
 > **Reading rules for the next agent:**
 > 1. Section 2 (implementation state) describes reality. Section 4 (locked decisions) describes the
@@ -100,8 +102,7 @@ Hard rules already followed by the codebase:
 
 # 2. CURRENT IMPLEMENTATION STATE
 
-> Everything in this section is verified against the repository working tree at HEAD `5f29df5`
-> **plus the uncommitted Phase 1 change** (see the banner at the top of this file).
+> Everything in this section was **verified against the repository after Phase 1 completed**.
 > **Planned functionality is marked explicitly and is NOT implemented.**
 
 ## 2.1 Authentication — IMPLEMENTED
@@ -662,7 +663,8 @@ was fixed as part of the phase.
   `create_all` operates on `MetaData` and never configures mappers. It simply went unnoticed because
   the existing `gym.db` was already seeded, so nobody re-ran the seeder against an empty database.
 - **Confirmed pre-existing**, not a Phase 1 regression: replaying the original file's exact logic
-  (including its `create_all` call) against a clean database fails identically at HEAD `5f29df5`.
+  (including its `create_all` call) against a clean database fails identically on the pre-Phase-1
+  version of the file.
 - **Fix:** added the missing `from app.workouts import models` import. One line.
   **No domain behavior changed** — the seeder is still the same idempotent upsert-by-name over the
   same 23 exercises. Leaving it broken would have been indistinguishable from a Phase 1 regression.
@@ -1006,11 +1008,16 @@ Invoke-RestMethod -Uri http://localhost:8000/api/workouts -Headers @{ Authorizat
 
 ## Maintaining this document
 
-When a phase completes, update: the HEAD/snapshot banner at the top, §2 (implementation state), §3
-(schema), §5 (resolved debt — move items out of the list rather than leaving them "done"), §6 (row
-counts if they changed), §7 (next phase), and §8 (progress). Record new architectural decisions in
-§4 **and** in `docs/decision-log.md`. Keep the implemented/planned distinction rigorous — it is the
-main value of this file.
+When a phase completes, update: the project-state banner at the top (phase status and next task),
+§2 (implementation state), §3 (schema), §5 (resolved debt — move items out of the list rather than
+leaving them "done"), §6 (row counts if they changed), §7 (next phase), and §8 (progress). Record
+new architectural decisions in §4 **and** in `docs/decision-log.md`. Keep the implemented/planned
+distinction rigorous — it is the main value of this file.
 
-**Last updated:** 2026-08-30, after Phase 1 (Alembic Foundation) completed. Locked decisions in §4
+**Do not record commit hashes here.** Git already tracks them, and a hash written into this file is
+stale the moment anything is committed. Describe state semantically — by phase, by baseline revision
+id, by what was verified — so this document only changes when the *project state* changes, not when
+the repository does.
+
+**Last verified:** 2026-08-30, after Phase 1 (Alembic Foundation) completed. Locked decisions in §4
 were **not** touched by that update and remain exactly as originally agreed.
