@@ -20,6 +20,8 @@ gym-tracker-app/
 │   │   ├── workouts/        Workout, WorkoutExercise, Set + CRUD
 │   │   ├── seed/            predefined exercises + idempotent seeder
 │   │   └── main.py          FastAPI app factory
+│   ├── alembic/             migration environment + versions/
+│   ├── alembic.ini          Alembic config (URL comes from app settings)
 │   ├── scripts/seed_db.py   CLI: python -m scripts.seed_db
 │   ├── requirements.txt
 │   ├── Dockerfile
@@ -105,11 +107,38 @@ python -m venv .venv
 # source .venv/bin/activate  # macOS/Linux
 pip install -r requirements.txt
 copy .env.example .env   # then edit JWT_SECRET, etc.
+alembic upgrade head     # creates/updates the schema (required before seeding)
 python -m scripts.seed_db
 uvicorn app.main:app --reload
 ```
 
 API will be available at `http://localhost:8000` (docs at `/docs`).
+
+### Database migrations (Alembic)
+
+The schema is owned by Alembic. The app no longer calls
+`Base.metadata.create_all()` at startup, so `alembic upgrade head` must be run
+after cloning and after pulling any change that adds a revision.
+
+```bash
+cd backend
+alembic upgrade head      # apply migrations
+alembic current           # revision the local DB is on
+alembic heads             # latest revision available
+alembic check             # fail if models drifted from migrations
+alembic revision --autogenerate -m "describe the change"
+```
+
+Alembic reads `DATABASE_URL` through `app/core/config.py`, the same source the
+application uses, so the two can never point at different databases. Always run
+these commands from `backend/`, because the default SQLite URL is relative.
+
+`sqlite:///./gym.db` holds real data and is git-ignored. Back it up before any
+migration that rewrites a table:
+
+```powershell
+Copy-Item gym.db "gym.db.backup-$(Get-Date -Format yyyyMMdd-HHmmss)"
+```
 
 ### Frontend
 
@@ -166,15 +195,11 @@ When you outgrow SQLite (per `architecture.md` Future Scalability):
 1. Uncomment `psycopg2-binary` in [backend/requirements.txt](backend/requirements.txt)
    and reinstall.
 2. Set `DATABASE_URL=postgresql+psycopg2://user:pass@host:5432/gym` in `.env`.
-3. (Recommended) Add Alembic for migrations:
-
-   ```bash
-   pip install alembic
-   alembic init backend/alembic
-   ```
-
-   Wire `target_metadata = Base.metadata` and switch from
-   `Base.metadata.create_all` (used in dev/seed) to versioned migrations.
+3. Run `alembic upgrade head` against the new database. Alembic is already
+   configured and picks up `DATABASE_URL` automatically; the baseline revision
+   recreates the full schema on an empty PostgreSQL instance. Note that the
+   SQLite-only `render_as_batch` in `alembic/env.py` switches itself off for
+   non-SQLite URLs.
 4. Uncomment the `db` service and `depends_on` block in
    [backend/docker-compose.yml](backend/docker-compose.yml).
 

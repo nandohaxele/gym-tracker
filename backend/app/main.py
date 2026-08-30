@@ -11,7 +11,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
-from app.core.database import Base, engine
 from app.core.exceptions import register_exception_handlers
 from app.core.response import ok
 
@@ -34,13 +33,14 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Importing the model modules registers them on Base.metadata before create_all.
+    # Importing the model modules registers every mapper before the routers
+    # resolve their string-based relationships.
     from app.auth import models as _auth_models  # noqa: F401
     from app.exercises import models as _exercises_models  # noqa: F401
     from app.workouts import models as _workouts_models  # noqa: F401
 
-    # TODO (future): replace create_all with Alembic migrations.
-    Base.metadata.create_all(bind=engine)
+    # Schema creation is owned by Alembic, not by the app. Run
+    # `alembic upgrade head` from backend/ before starting the server.
 
     from app.auth.routes import router as auth_router
     from app.exercises.routes import router as exercises_router

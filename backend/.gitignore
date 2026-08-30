@@ -25,6 +25,8 @@ dist/
 *.db
 *.sqlite
 *.sqlite3
+# Pre-migration snapshots (gym.db.backup-YYYYmmdd-HHMMSS) hold real user data
+*.db.backup-*
 
 # Editors / IDE
 .vscode/

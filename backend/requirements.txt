@@ -4,6 +4,7 @@ uvicorn[standard]==0.30.6
 
 # ORM & DB drivers
 SQLAlchemy==2.0.35
+alembic==1.13.3
 # Uncomment when migrating to PostgreSQL (architecture.md - Future Scalability)
 # psycopg2-binary==2.9.9
 

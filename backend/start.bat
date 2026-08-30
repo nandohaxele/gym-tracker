@@ -24,6 +24,15 @@ for /f "tokens=5" %%P in ('netstat -ano ^| findstr ":8000 " ^| findstr "LISTENIN
     taskkill /F /PID %%P >nul 2>&1
 )
 
+REM The app no longer creates tables at startup; Alembic owns the schema.
+REM This is a no-op when the database is already at head.
+echo Applying database migrations...
+".venv\Scripts\python.exe" -m alembic upgrade head
+if errorlevel 1 (
+    echo [ERROR] alembic upgrade head failed. Not starting the server.
+    exit /b 1
+)
+
 echo Starting uvicorn from %CD% using .venv...
 ".venv\Scripts\python.exe" -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 

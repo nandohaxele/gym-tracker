@@ -21,5 +21,7 @@ COPY . .
 
 EXPOSE 8000
     
+# Schema creation is owned by Alembic, so migrate before serving. `upgrade head`
+# is a no-op when the database is already current.
 # TODO: For production, drop --reload and run with multiple workers.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"]
