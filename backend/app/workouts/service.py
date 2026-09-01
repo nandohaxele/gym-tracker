@@ -14,7 +14,7 @@ from datetime import date as _date
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.exceptions import NotFoundError, ValidationError
-from app.exercises.models import Exercise
+from app.exercises import service as exercises_service
 from app.workouts.models import Set, Workout, WorkoutExercise
 from app.workouts.schemas import (
     WorkoutCreate,
@@ -62,18 +62,25 @@ def get_workout(db: Session, user_id: int, workout_id: int) -> Workout:
 
 # ---- Helpers ------------------------------------------------------------
 
-def _validate_exercise_ids(db: Session, exercise_ids: set[int]) -> None:
-    """Ensure every referenced exercise_id exists in the catalog.
+def _validate_exercise_ids(
+    db: Session, user_id: int, exercise_ids: set[int]
+) -> None:
+    """Ensure every referenced exercise_id is one the user may actually select.
+
+    Valid means active and either global or personally owned. Unknown ids,
+    archived personal exercises and other users' exercises are all reported the
+    same way, so the error never reveals that someone else's exercise exists.
+
+    Only writes go through here: `get_workout` deliberately does not filter, so
+    history that references a since-archived exercise stays readable and is never
+    rewritten.
 
     Single batched query -- avoids N round-trips when validating large trees.
     """
     if not exercise_ids:
         return
 
-    found_rows = (
-        db.query(Exercise.id).filter(Exercise.id.in_(exercise_ids)).all()
-    )
-    found = {row[0] for row in found_rows}
+    found = exercises_service.selectable_exercise_ids(db, user_id, exercise_ids)
     missing = exercise_ids - found
     if missing:
         raise ValidationError(f"Unknown exercise_id(s): {sorted(missing)}")
@@ -111,7 +118,7 @@ def create_workout(db: Session, user_id: int, payload: WorkoutCreate) -> Workout
     """Create a workout with optional nested exercises and sets."""
     if payload.exercises:
         _validate_exercise_ids(
-            db, {ex.exercise_id for ex in payload.exercises}
+            db, user_id, {ex.exercise_id for ex in payload.exercises}
         )
 
     workout = Workout(
@@ -144,7 +151,7 @@ def update_workout(
 
     if payload.exercises:
         _validate_exercise_ids(
-            db, {ex.exercise_id for ex in payload.exercises}
+            db, user_id, {ex.exercise_id for ex in payload.exercises}
         )
 
     workout.name = payload.name

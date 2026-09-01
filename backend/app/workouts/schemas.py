@@ -49,13 +49,16 @@ class ExerciseRefOut(BaseModel):
 
     Kept intentionally minimal: enough for the UI to render the workout
     without hitting `/exercises` again.
+
+    `muscle_group` is optional because personal exercises may omit it, and
+    because history can reference an exercise that has since been archived.
     """
 
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     name: str
-    muscle_group: str
+    muscle_group: Optional[str] = None
 
 
 # ---- WorkoutExercise schemas --------------------------------------------

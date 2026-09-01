@@ -22,7 +22,7 @@ export default function ExercisePicker({ onPick, onClose, selectedIds = [] }) {
       ? list.filter(
           (ex) =>
             ex.name.toLowerCase().includes(q) ||
-            ex.muscle_group.toLowerCase().includes(q)
+            (ex.muscle_group || '').toLowerCase().includes(q)
         )
       : list;
 

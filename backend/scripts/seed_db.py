@@ -20,17 +20,18 @@ from app.seed.seeder import run_seed
 def main() -> None:
     """Open a session, run the seeder, log results."""
     # Tables are created by Alembic, so a missing one means migrations have not
-    # been applied. Fail with that instruction rather than a raw OperationalError.
-    if not inspect(engine).has_table("exercises"):
+    # been applied. Checking the newest table catches a database that stopped at
+    # an older revision, not just an empty one.
+    if not inspect(engine).has_table("exercise_tracking"):
         raise SystemExit(
-            "Table 'exercises' is missing. Run `alembic upgrade head` from "
-            "backend/ before seeding."
+            "Table 'exercise_tracking' is missing. Run `alembic upgrade head` "
+            "from backend/ before seeding."
         )
 
     db = SessionLocal()
     try:
-        inserted = run_seed(db)
-        print(f"Seed complete. Inserted {inserted} new exercise(s).")
+        result = run_seed(db)
+        print(f"Seed complete. Inserted {result}.")
     finally:
         db.close()
 
