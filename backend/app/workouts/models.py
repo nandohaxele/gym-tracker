@@ -13,11 +13,32 @@ Cascade strategy:
 """
 
 from datetime import datetime
+from enum import Enum
 
-from sqlalchemy import Column, Date, DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy import (
+    CheckConstraint,
+    Column,
+    Date,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+)
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
+
+
+class SetType(str, Enum):
+    """How a recorded set was intended, independent of the tracking metrics."""
+
+    warmup = "warmup"
+    working = "working"
+    dropset = "dropset"
+
+
+SET_TYPE_VALUES: tuple[str, ...] = tuple(t.value for t in SetType)
 
 
 class Workout(Base):
@@ -85,9 +106,47 @@ class WorkoutExercise(Base):
 
 
 class Set(Base):
-    """A single performed set (reps + weight), ordered within its WorkoutExercise."""
+    """A single performed set, ordered within its WorkoutExercise.
+
+    Tracking fields (`reps`, `duration_seconds`, `distance_meters`) are all
+    nullable. The service layer requires the parent Exercise's *primary*
+    metric on write; historical rows that predate that rule are left intact.
+    `weight_kg` is an optional load attribute, not a tracking type: 0 and
+    NULL are distinct (unloaded vs. unknown).
+    """
 
     __tablename__ = "sets"
+
+    __table_args__ = (
+        CheckConstraint(
+            "set_type IN (" + ", ".join(repr(v) for v in SET_TYPE_VALUES) + ")",
+            name="ck_sets_set_type",
+        ),
+        CheckConstraint(
+            "reps IS NULL OR reps > 0",
+            name="ck_sets_reps_positive",
+        ),
+        CheckConstraint(
+            "weight_kg IS NULL OR weight_kg >= 0",
+            name="ck_sets_weight_kg_nonneg",
+        ),
+        CheckConstraint(
+            "duration_seconds IS NULL OR duration_seconds > 0",
+            name="ck_sets_duration_positive",
+        ),
+        CheckConstraint(
+            "distance_meters IS NULL OR distance_meters > 0",
+            name="ck_sets_distance_positive",
+        ),
+        CheckConstraint(
+            "rpe IS NULL OR (rpe >= 0 AND rpe <= 10)",
+            name="ck_sets_rpe_range",
+        ),
+        CheckConstraint(
+            "rir IS NULL OR (rir >= 0 AND rir <= 5)",
+            name="ck_sets_rir_range",
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     workout_exercise_id = Column(
@@ -96,8 +155,18 @@ class Set(Base):
         nullable=False,
         index=True,
     )
-    reps = Column(Integer, nullable=False)
-    weight = Column(Float, nullable=False)
+    reps = Column(Integer, nullable=True)
+    weight_kg = Column(Numeric(6, 2), nullable=True)
+    duration_seconds = Column(Integer, nullable=True)
+    distance_meters = Column(Integer, nullable=True)
+    rpe = Column(Numeric(3, 1), nullable=True)
+    rir = Column(Integer, nullable=True)
+    set_type = Column(
+        String(16),
+        nullable=False,
+        default=SetType.working.value,
+        server_default="working",
+    )
     order_index = Column(Integer, nullable=False, default=0)
 
     workout_exercise = relationship("WorkoutExercise", back_populates="sets")
@@ -105,5 +174,6 @@ class Set(Base):
     def __repr__(self) -> str:
         return (
             f"<Set id={self.id} we_id={self.workout_exercise_id} "
-            f"reps={self.reps} weight={self.weight}>"
+            f"reps={self.reps} weight_kg={self.weight_kg} "
+            f"set_type={self.set_type!r}>"
         )

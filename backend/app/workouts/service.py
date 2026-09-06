@@ -15,12 +15,21 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.core.exceptions import NotFoundError, ValidationError
 from app.exercises import service as exercises_service
+from app.exercises.models import ExerciseTracking
 from app.workouts.models import Set, Workout, WorkoutExercise
 from app.workouts.schemas import (
     WorkoutCreate,
     WorkoutExerciseIn,
     WorkoutUpdate,
 )
+
+# Exercise tracking type -> Set column that must be present on write.
+# Weight is not a tracking type and is never required by this map.
+_PRIMARY_SET_FIELD = {
+    "reps": "reps",
+    "duration": "duration_seconds",
+    "distance": "distance_meters",
+}
 
 
 # ---- Read ---------------------------------------------------------------
@@ -86,6 +95,63 @@ def _validate_exercise_ids(
         raise ValidationError(f"Unknown exercise_id(s): {sorted(missing)}")
 
 
+def _primary_tracking_by_exercise_id(
+    db: Session, exercise_ids: set[int]
+) -> dict[int, str]:
+    """Return the primary tracking type for each requested exercise_id."""
+    if not exercise_ids:
+        return {}
+    rows = (
+        db.query(ExerciseTracking.exercise_id, ExerciseTracking.tracking_type)
+        .filter(
+            ExerciseTracking.exercise_id.in_(exercise_ids),
+            ExerciseTracking.is_primary.is_(True),
+        )
+        .all()
+    )
+    return {exercise_id: tracking_type for exercise_id, tracking_type in rows}
+
+
+def _validate_set_primary_metrics(
+    db: Session, items: list[WorkoutExerciseIn]
+) -> None:
+    """Require each recorded Set to carry the parent Exercise's primary metric.
+
+    Secondary metrics stay optional. `weight_kg` is never required here — it
+    is not a tracking type. Historical rows that lack a primary metric are
+    not run through this function; only create/update writes are.
+
+    `get_workout` deliberately does not call this, so pre-Phase-3 history
+    (e.g. the plank set that stored duration in `reps`) stays readable.
+    """
+    recorded = [ex for ex in items if ex.sets]
+    if not recorded:
+        return
+
+    exercise_ids = {ex.exercise_id for ex in recorded}
+    primary_by_id = _primary_tracking_by_exercise_id(db, exercise_ids)
+
+    missing_tracking = sorted(exercise_ids - primary_by_id.keys())
+    if missing_tracking:
+        raise ValidationError(
+            f"Exercise(s) missing primary tracking: {missing_tracking}"
+        )
+
+    failures: list[str] = []
+    for ex_in in recorded:
+        field = _PRIMARY_SET_FIELD[primary_by_id[ex_in.exercise_id]]
+        for index, s_in in enumerate(ex_in.sets):
+            if getattr(s_in, field) is None:
+                failures.append(
+                    f"exercise_id {ex_in.exercise_id} set[{index}] requires {field}"
+                )
+    if failures:
+        raise ValidationError(
+            "Set is missing the exercise primary tracking metric: "
+            + "; ".join(failures)
+        )
+
+
 def _build_exercise_tree(items: list[WorkoutExerciseIn]) -> list[WorkoutExercise]:
     """Translate the nested input payload into ORM instances.
 
@@ -102,7 +168,12 @@ def _build_exercise_tree(items: list[WorkoutExerciseIn]) -> list[WorkoutExercise
             we.sets.append(
                 Set(
                     reps=s_in.reps,
-                    weight=s_in.weight,
+                    weight_kg=s_in.weight_kg,
+                    duration_seconds=s_in.duration_seconds,
+                    distance_meters=s_in.distance_meters,
+                    rpe=s_in.rpe,
+                    rir=s_in.rir,
+                    set_type=s_in.set_type.value,
                     order_index=s_in.order_index
                     if s_in.order_index is not None
                     else s_idx,
@@ -120,6 +191,7 @@ def create_workout(db: Session, user_id: int, payload: WorkoutCreate) -> Workout
         _validate_exercise_ids(
             db, user_id, {ex.exercise_id for ex in payload.exercises}
         )
+        _validate_set_primary_metrics(db, payload.exercises)
 
     workout = Workout(
         user_id=user_id,
@@ -153,6 +225,7 @@ def update_workout(
         _validate_exercise_ids(
             db, user_id, {ex.exercise_id for ex in payload.exercises}
         )
+        _validate_set_primary_metrics(db, payload.exercises)
 
     workout.name = payload.name
     if payload.date is not None:

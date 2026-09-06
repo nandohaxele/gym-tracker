@@ -5,14 +5,15 @@
 > *actually implemented today*, the *locked* domain decisions that must not be re-litigated, the known
 > technical debt, and the exact next task.
 >
-> **Branch:** `main` · **Last verified:** 2026-09-01
+> **Branch:** `main` · **Last verified:** 2026-09-06
 >
 > **Project state:** **Phase 1 — Alembic Foundation: COMPLETED** (§2.9) ·
-> **Phase 2 — Exercise Domain: COMPLETED** (§2.10).
-> Alembic owns schema evolution: baseline **`f3f47238398b`**, head **`da9c526717c0`**.
-> Exercises now support global vs. personal ownership, normalized names, global slugs, relational
-> tracking metadata, synonyms, and soft archiving. Existing data preserved (9 / 23 / 8 / 17 / 58).
-> **Next task: Phase 3 — Set & Tracking** (§7).
+> **Phase 2 — Exercise Domain: COMPLETED** (§2.10) ·
+> **Phase 3 — Set & Tracking: COMPLETED** (§2.11).
+> Alembic owns schema evolution: baseline **`f3f47238398b`**, head **`88e993067758`**.
+> Sets now store nullable tracking metrics (`reps` / `duration_seconds` / `distance_meters`),
+> nullable `weight_kg` DECIMAL(6,2), RPE/RIR, and `set_type`. Existing data preserved
+> (9 / 23 / 8 / 17 / 58), including every Set id. **Next task: Phase 4 — Templates** (§7).
 >
 > This document deliberately records **no commit hash**. Git is the source of truth for revision
 > history — run `git log`/`git status` if you need it. Describe state semantically here so this file
@@ -49,7 +50,7 @@ first-class concern.
 | Validation | Pydantic 2.9.2 + `pydantic-settings` 2.5.2 |
 | Auth | JWT bearer HS256 via `python-jose`; password hashing via `passlib[bcrypt]` with **`bcrypt` pinned to 4.0.1** (passlib 1.7.4 breaks on bcrypt ≥ 4.1 — do not bump it casually; the reason is documented in `requirements.txt`) |
 | Server | uvicorn 0.30.6 |
-| Migrations | **Alembic 1.13.3** — baseline `f3f47238398b`, head `da9c526717c0`; `create_all()` removed from startup (see §2.9, §2.10) |
+| Migrations | **Alembic 1.13.3** — baseline `f3f47238398b`, head `88e993067758`; `create_all()` removed from startup (see §2.9–§2.11) |
 | Tests | **NONE** (no test files, no pytest/httpx in `requirements.txt`) |
 
 ## Current frontend stack
@@ -82,7 +83,7 @@ backend/
   alembic.ini          # Alembic config; sqlalchemy.url intentionally blank
   alembic/             # migration environment
     env.py             # reads DATABASE_URL from app settings; target_metadata = Base.metadata
-    versions/          # f3f47238398b (baseline) -> da9c526717c0 (exercise domain)
+    versions/          # f3f47238398b -> da9c526717c0 -> 88e993067758 (set tracking)
   scripts/seed_db.py   # CLI seeding entrypoint (NOT under app/)
   app/
     main.py            # app factory: CORS, model imports, router mounting (no create_all)
@@ -201,15 +202,27 @@ Implementation notes that matter:
 **NOT implemented:** templates, session start/end timestamps, active vs. completed state, notes,
 per-session duration, granular child-resource endpoints, pagination.
 
-## 2.4 Sets — IMPLEMENTED, REPS+WEIGHT ONLY
+## 2.4 Sets — IMPLEMENTED (Phase 3)
 
-- `Set` has: `id`, `workout_exercise_id`, `reps` (INTEGER **NOT NULL**), `weight`
-  (FLOAT **NOT NULL**), `order_index`.
-- Validation: `reps > 0`, `weight >= 0` (Pydantic `SetIn`, mirrored by Zod `setSchema` on the frontend).
-- Sets only exist as part of the nested workout tree. **There are no `/sets` endpoints in the backend.**
+The Set-side tracking model from §4.3 / §4.4 is implemented. Full delivery detail is in **§2.11**.
 
-**NOT implemented:** nullable weight, duration, distance, tracking types, RPE, RIR, set types
-(warmup/working/dropset), decimal weight precision, any standalone set endpoint.
+- `Set` has: `id`, `workout_exercise_id`, nullable `reps`, nullable `weight_kg` (`NUMERIC(6,2)`),
+  nullable `duration_seconds`, nullable `distance_meters`, nullable `rpe` (`NUMERIC(3,1)`),
+  nullable `rir`, `set_type` (`warmup | working | dropset`, default **`working`**), `order_index`.
+- `weight_kg = 0` is valid and distinct from NULL. Weight is **not** a tracking type and is never
+  required by tracking validation.
+- Write validation (service layer only): every recorded Set must carry the parent Exercise's
+  **primary** tracking metric (`reps` / `duration_seconds` / `distance_meters`). Secondaries are
+  optional. Unconfigured extra metrics are allowed. Historical rows are **not** re-validated on
+  read — `get_workout` still returns the pre-Phase-3 plank set (id 38) that has no
+  `duration_seconds`.
+- Nested workout `SetIn` accepts `weight` as a compatibility alias for `weight_kg`; `SetOut`
+  emits both so the current frontend keeps working. RPE/RIR are accepted and returned but have
+  no UI.
+- Sets still exist only as part of the nested workout tree. **There are no `/sets` endpoints.**
+  The destructive whole-workout PUT is unchanged.
+
+**NOT implemented:** granular Set APIs (Phase 5), frontend tracking fields (Phase 6).
 
 ## 2.5 Frontend pages / features — IMPLEMENTED
 
@@ -297,7 +310,7 @@ Note for whoever builds the real suite: `httpx` is **not installed**, so
 4. **`docs/project-status.md` is stale**: it declares the current phase to be "Phase 5 Step 3
    (Rest Timer, UX Polish, Empty States, Loading Skeletons)". Empty/error states are already
    implemented (`StatusView`), Phases 1 (Alembic) and 2 (Exercise domain) are now **complete**, and
-   the real next task is **Phase 3 — Set & Tracking** (§7).
+   the real next task is **Phase 4 — Templates** (§7).
    ⚠️ **Phase-numbering collision:** the old frontend-era numbering ("Phase 5 Step 3") is unrelated to
    the new domain roadmap numbering in §8. Use §8 numbering from now on.
 5. **`docs/decision-log.md` is empty (0 bytes)** despite being the designated place for decisions.
@@ -490,14 +503,69 @@ readable; another user's exercise not addable; seed idempotency; and full workou
 type, a metric cannot be both primary and secondary, `DELETE /api/exercises/{id}` is a 405, and
 editing a global is a 422.
 
+## 2.11 Set & tracking — IMPLEMENTED (Phase 3, COMPLETED)
+
+**Migration revision: `88e993067758`** ("set tracking domain"),
+`down_revision = "da9c526717c0"`. This is the first revision that changes the `sets` table.
+Behavioral summary is in §2.4; the resulting schema is in §3.
+
+### Files
+
+Created:
+
+- `backend/alembic/versions/88e993067758_set_tracking_domain.py`.
+
+Modified: `app/workouts/{models,schemas,service}.py`. **No frontend files.** No new HTTP routes.
+The destructive `update_workout` PUT was left in place on purpose (Phase 5).
+
+### Migration of the existing 58 sets
+
+All 58 rows **kept their ids**, including the PUT-churn gaps (`min=1`, `max=98`). `reps` values
+were copied unchanged and the column was then relaxed to nullable. `weight` was copied through an
+explicit `ROUND(weight, 2)` into `weight_kg NUMERIC(6,2)` and then dropped. New metric columns
+(`duration_seconds`, `distance_meters`, `rpe`, `rir`) are NULL. `set_type` was backfilled to
+`working`.
+
+No primary-metric CHECK was added: it cannot be expressed without a join to `exercise_tracking`,
+and it would have rejected **set id 38** (plank on workout 5 / "Leg day"), which stored
+`reps=200`, `weight=96` under the old schema. That row was **not** rewritten to invent a
+duration. It remains readable; a fresh write of a plank Set without `duration_seconds` is a 422.
+
+`downgrade()` refuses if any Set would lose data (null `reps`/`weight_kg`, any Phase-3-only
+value, or a non-`working` `set_type`). Against a freshly migrated copy of the current `gym.db`
+it restores the baseline `sets` table exactly (verified on a scratch copy).
+
+### Wire compatibility
+
+`SetIn` accepts `weight` as an alias for `weight_kg`. `SetOut` emits both fields (decimals
+serialized as JSON numbers) so the current editor and detail page keep working until Phase 6.
+RPE/RIR remain backend-only.
+
+### Verification performed
+
+Data safety on the real `gym.db`, rehearsed first on a full copy: row counts still
+9 / 23 / 8 / 17 / 58; identical `sets.id` set; every historical `reps`/`order_index`/
+`workout_exercise_id` unchanged; every `weight_kg` equals the old `weight`; extras NULL;
+all `set_type = working`; set 38 untouched besides the rename; `pragma foreign_key_check` and
+`integrity_check` clean; `alembic current` = `heads` = `88e993067758`; `alembic check` clean.
+Indexes `ix_sets_id` and `ix_sets_workout_exercise_id` survived the rebuild.
+
+Behavioral checks on a scratch copy of the migrated DB (21 assertions): app boots; no `/sets`
+routes; PUT still present and still recreates child ids; workout 5 / set 38 readable with the
+`weight` alias; create with the frontend `{reps, weight}` payload succeeds for a reps-primary
+exercise; `weight_kg = 0` is stored as 0; plank without `duration_seconds` is rejected; plank
+with `duration_seconds` plus optional RPE/RIR/`set_type=warmup` succeeds; RPE 7.2 is rejected
+as an invalid increment.
+
 ---
 
 # 3. CURRENT DATABASE SCHEMA
 
-This is the **exact live schema** of `backend/gym.db`, dumped from `sqlite_master` on 2026-09-01,
-i.e. at revision `da9c526717c0`. `users`, `workouts`, `workout_exercises` and `sets` are still
-byte-for-byte what `create_all()` produced and the baseline reproduces; **`exercises` was widened and
-two tables were added by Phase 2** (§2.10). `alembic_version` is listed at the end.
+This is the **exact live schema** of `backend/gym.db`, dumped from `sqlite_master` on 2026-09-06,
+i.e. at revision `88e993067758`. `users`, `workouts` and `workout_exercises` are still what
+`create_all()` produced and the baseline reproduces; **`exercises` was widened and two tables
+were added by Phase 2** (§2.10); **`sets` was rebuilt by Phase 3** (§2.11). `alembic_version`
+is listed at the end.
 
 Formatting note: SQLite quotes the table name (`CREATE TABLE "exercises"`) after a
 `batch_alter_table` rebuild. That is cosmetic.
@@ -601,13 +669,32 @@ CREATE INDEX ix_workout_exercises_workout_id  ON workout_exercises (workout_id);
 CREATE INDEX ix_workout_exercises_exercise_id ON workout_exercises (exercise_id);
 CREATE INDEX ix_workout_exercises_id          ON workout_exercises (id);
 
-CREATE TABLE sets (
+CREATE TABLE "sets" (
     id                  INTEGER NOT NULL,
     workout_exercise_id INTEGER NOT NULL,
-    reps                INTEGER NOT NULL,
-    weight              FLOAT NOT NULL,
+    reps                INTEGER,                 -- nullable since Phase 3
     order_index         INTEGER NOT NULL,
+    weight_kg           NUMERIC(6, 2),           -- nullable; 0 ≠ NULL
+    duration_seconds    INTEGER,
+    distance_meters     INTEGER,
+    rpe                 NUMERIC(3, 1),
+    rir                 INTEGER,
+    set_type            VARCHAR(16) DEFAULT 'working' NOT NULL,
     PRIMARY KEY (id),
+    CONSTRAINT ck_sets_set_type
+        CHECK (set_type IN ('warmup', 'working', 'dropset')),
+    CONSTRAINT ck_sets_reps_positive
+        CHECK (reps IS NULL OR reps > 0),
+    CONSTRAINT ck_sets_weight_kg_nonneg
+        CHECK (weight_kg IS NULL OR weight_kg >= 0),
+    CONSTRAINT ck_sets_duration_positive
+        CHECK (duration_seconds IS NULL OR duration_seconds > 0),
+    CONSTRAINT ck_sets_distance_positive
+        CHECK (distance_meters IS NULL OR distance_meters > 0),
+    CONSTRAINT ck_sets_rpe_range
+        CHECK (rpe IS NULL OR (rpe >= 0 AND rpe <= 10)),
+    CONSTRAINT ck_sets_rir_range
+        CHECK (rir IS NULL OR (rir >= 0 AND rir <= 5)),
     FOREIGN KEY (workout_exercise_id) REFERENCES workout_exercises (id) ON DELETE CASCADE
 );
 CREATE INDEX ix_sets_workout_exercise_id ON sets (workout_exercise_id);
@@ -623,9 +710,9 @@ CREATE TABLE alembic_version (
 );
 ```
 
-It currently holds exactly one row: **`da9c526717c0`** (it held `f3f47238398b` between Phases 1
-and 2). This is Alembic's own bookkeeping — it is **not** part of the domain model, has no
-relationships, and must never be edited by hand.
+It currently holds exactly one row: **`88e993067758`** (it held `f3f47238398b` after Phase 1
+and `da9c526717c0` after Phase 2). This is Alembic's own bookkeeping — it is **not** part of
+the domain model, has no relationships, and must never be edited by hand.
 
 ## Uniqueness rules, stated plainly
 
@@ -830,14 +917,13 @@ All storage uses canonical units. Any unit conversion is a presentation concern.
 > ✅ **Resolved by Phase 2** and removed from this list: *"the exercise catalog is read-only with no
 > ownership model"*. Phase 2 resolved **none** of the items below — it deliberately touched no Set
 > column and no runtime PRAGMA — but it did add items 15–19.
+>
+> ✅ **Resolved by Phase 3** and removed from this list: *"Set requires NOT NULL reps+weight"* and
+> *"`weight` is FLOAT"*. Numbers of the remaining items are **not** renumbered, so cross-references
+> such as §5.5 / §5.12 stay stable. Phase 3 added items 20–21.
 
 1. **SQLite holds existing real data** (`backend/gym.db`, 9 users / 8 workouts / 58 sets). Migrations
    must be non-destructive. See §6.
-2. **The current `Set` requires `reps` and `weight` (both NOT NULL) and cannot represent all
-   tracking types.** Duration-based and distance-based exercises are impossible to record today, and
-   unloaded exercises cannot distinguish "0 kg" from "no weight concept".
-3. **`weight` is `FLOAT`**, not `DECIMAL(6,2)` as decided in §4.4. Migrating requires a value-safe
-   conversion.
 4. **The frontend calls `/sets` endpoints that the backend does not implement.**
    `frontend/src/api/sets.js` (+ `api_contract.md`) describe `POST /sets`, `PUT /sets/{id}`,
    `DELETE /sets/{id}`. None exist. Currently harmless because the module is unused, but it is a trap.
@@ -905,6 +991,13 @@ All storage uses canonical units. Any unit conversion is a presentation concern.
     for a hanging leg raise, "Bicep Curl" for either curl variant). Expect to curate this.
 19. **`exercise_synonyms.locale` is stored but not used.** Everything is seeded as `en` and the
     resolver matches across all locales. It exists so adding real i18n later is not a migration.
+20. **`weight` remains a compatibility alias for `weight_kg`.** The current frontend still reads
+    and writes `weight`. Phase 3 kept the alias on `SetIn`/`SetOut` so the editor and detail page
+    do not break. Drop the alias when Phase 6 adapts the UI.
+21. **Historical plank set id 38 has no `duration_seconds`.** It was recorded under the old
+    reps+weight schema (`reps=200`, `weight_kg=96`) and was deliberately not rewritten. Reads
+    succeed; a PUT of workout 5 that resubmits that set without `duration_seconds` is a 422
+    until Phase 6 can send duration. Do not invent a duration in a later migration.
 
 ## 5.1 Fixed during Phase 1 — pre-existing `seed_db` bug
 
@@ -934,12 +1027,23 @@ These are **not** oversights. Each is a locked decision whose prerequisite does 
 
 | Deferred behavior | Where it belongs | Why it could not be done now |
 |---|---|---|
-| **"A Set must contain the Exercise primary metric"** (§4.3) — Set-side metric validation | **Phase 3 — Set & Tracking** | Phase 2 implements the *Exercise* side of tracking only. `Set` still has NOT NULL `reps` + `weight` and no duration/distance columns, so the rule has nothing to validate against. `exercise_tracking` is the table Phase 3 must read. |
+| ✅ **"A Set must contain the Exercise primary metric"** (§4.3) | **done in Phase 3** | Service-layer write check against `exercise_tracking`. Historical set 38 is grandfathered on read (§5.21). |
 | **"Archiving a personal exercise removes it from future personal templates"** (§4.5) | **Phase 4 — Templates** | No `Template` entity exists — no model, no table (§5.7). `service.archive_personal_exercise` currently only flips `is_active`; its docstring names this deferral so it is found when templates land. |
 | **Full frontend adaptation** — tracking UI, personal-exercise UI, archived/restore views, `ExercisePicker` redesign | **Phase 6 — Frontend adaptation** | Phase 2 was backend-scoped. The single one-line null-safety guard in `ExercisePicker.jsx` (§2.10) is a compatibility fix, not adaptation. |
 | **`PRAGMA foreign_keys=ON` at runtime** | still undecided (§5.12) | A runtime behavior change, not infrastructure. Phase 2 confirmed again that it is not needed for safe migrations and left it alone. |
 | **HTTP resolver endpoint** | whenever a consumer needs it (likely Phase 6/7) | `service.resolve_exercise` is fully implemented and tested, but nothing calls it over HTTP yet, and inventing an endpoint shape without a consumer would be speculative. The AI/voice layer (Phase 7) is its obvious first user. |
 | **Restore-from-archive** | not scheduled | §4.5 says "no archived/restore UI for now". No API either, so nothing has to be un-built later. The archived row keeps its normalized name precisely so a restore stays possible (§3). |
+
+## 5.3 Deliberately deferred by Phase 3
+
+These are **not** oversights.
+
+| Deferred behavior | Where it belongs | Why it was left |
+|---|---|---|
+| **Granular Set APIs and replacing the destructive PUT** (§4.7, §5.5) | **Phase 5** | Nested `POST`/`PUT /api/workouts` still rebuild child ids. Phase 3 only changed the columns those writes persist. |
+| **Frontend tracking UI** — duration/distance fields, optional weight, RPE/RIR, `set_type`, dropping the `weight` alias | **Phase 6** | Phase 3 was backend-scoped. The `weight` alias is a compatibility shim, not adaptation. |
+| **Templates** | **Phase 4** | Still no `Template` entity. |
+| **`PRAGMA foreign_keys=ON` at runtime** | still undecided (§5.12) | Left alone again. Not required for the `sets` rebuild. |
 
 ---
 
@@ -957,9 +1061,9 @@ These are **not** oversights. Each is a locked decision whose prerequisite does 
   with it rather than upgraded through it, so no DDL ever ran against the populated tables. From
   here on, every schema change is an **incremental revision** on top of that baseline.
 - ⚠️ **Never run `alembic downgrade` against `backend/gym.db`.** The baseline's `downgrade()` drops
-  every table (§5.13). `da9c526717c0`'s own `downgrade()` is less dangerous — it refuses outright if
-  any personal exercise exists, and otherwise drops the Phase 2 columns and tables — but it still
-  destroys tracking and synonym data.
+  every table (§5.13). `da9c526717c0`'s own `downgrade()` refuses if any personal exercise exists,
+  and otherwise drops the Phase 2 columns and tables. `88e993067758`'s `downgrade()` refuses if any
+  Set would lose Phase 3 data, and otherwise restores the old `reps`+`weight` table.
 - **Preserve all existing rows AND their primary key values.** Existing IDs are referenced by
   foreign keys and are user-visible in URLs (`/workouts/:id`).
 - **Create a backup file before any destructive SQLite migration.** SQLite has limited `ALTER TABLE`
@@ -967,7 +1071,7 @@ These are **not** oversights. Each is a locked decision whose prerequisite does 
   *create new table → copy data → drop old → rename* pattern; Alembic's `batch_alter_table` does
   this. Always copy `gym.db` to a timestamped file first, and verify row counts afterwards.
 
-## Recorded row counts (current — measured 2026-09-01, after Phase 2)
+## Recorded row counts (current — measured 2026-09-06, after Phase 3)
 
 | Table | Rows | `max(id)` |
 |---|---|---|
@@ -979,24 +1083,20 @@ These are **not** oversights. Each is a locked decision whose prerequisite does 
 | `exercise_tracking` | **23** | 23 |
 | `exercise_synonyms` | **26** | 26 |
 
-The first five are unchanged from before Phase 1. **Neither Phase 1 nor Phase 2 changed a single
-pre-existing row**, verified both times by a row-level comparison against the pre-migration backup:
-all 23 exercise ids, all 17 `workout_exercises.exercise_id` references, and the full `users` /
-`workouts` / `sets` tables came back identical, as did the four original `exercises` columns.
+The first five are unchanged from before Phase 1. Phase 3 changed **no Set primary keys** and no
+row counts. Each historical `reps` / `order_index` / `workout_exercise_id` is identical; each
+`weight_kg` equals the old `weight`. The only intentional data change is the column rename plus
+`set_type = 'working'` on all 58 rows.
 
-`exercise_tracking` (23) and `exercise_synonyms` (26) are new: one primary metric per global
-exercise, backfilled by the migration, plus the curated global aliases inserted by the seeder.
-
-`alembic_version` holds **`da9c526717c0`**.
+`alembic_version` holds **`88e993067758`**.
 
 Extra facts useful as invariants: workouts per user = `{user 7: 1, user 8: 5, user 9: 2}`;
-`sets` with `weight = 0`: **0**; `pragma foreign_key_check` and `pragma integrity_check` both clean.
-The gaps between row counts and `max(id)` are expected — they are the fingerprint of the PUT-rebuild
-churn described in §5.5, not data loss.
+`sets` with `weight_kg = 0`: **0**; `sets` with non-null duration/distance/RPE/RIR: **0**;
+set 38 remains `reps=200`, `weight_kg=96`, `duration_seconds=NULL`; `pragma foreign_key_check`
+and `pragma integrity_check` both clean. The gaps between row counts and `max(id)` are expected
+— they are the fingerprint of the PUT-rebuild churn described in §5.5, not data loss.
 
-Phase 2 invariants worth re-checking after any exercise migration: all 23 exercises are global
-(`user_id IS NULL`) and active; every `name_normalized` equals `normalize_name(name)`; every global
-`slug` equals `slugify_name(name)`; no global normalized-name or slug collisions; exactly one primary
+Phase 2 invariants still hold: all 23 exercises are global and active; exactly one primary
 tracking row per exercise; `plank` is the only primary that is not `reps`.
 
 **Any migration must leave these counts identical unless the migration's explicit purpose is to
@@ -1008,14 +1108,15 @@ change data.**
 |---|---|
 | `backend/gym.db.backup-20260830-225004` (73,728 bytes) | immediately before Phase 1 |
 | `backend/gym.db.backup-20260901-085211` (81,920 bytes) | at the start of the Phase 2 session |
-| `backend/gym.db.backup-20260901-091115` (81,920 bytes) | immediately before applying `da9c526717c0` — **this is the Phase 2 rollback point** |
+| `backend/gym.db.backup-20260901-091115` (81,920 bytes) | immediately before applying `da9c526717c0` — **Phase 2 rollback point** |
+| `backend/gym.db.backup-20260906-225407` (151,552 bytes) | immediately before applying `88e993067758` — **this is the Phase 3 rollback point** |
 
 They are git-ignored via the `*.db.backup-*` rule added to `backend/.gitignore` — the pre-existing
 `*.db` rule did **not** match it, so without that rule real user data would have been committed.
 
-Phase 2's migration was additionally **rehearsed on a full copy of `gym.db`** and passed the entire
-verification suite there *before* being applied to the real file. Do the same for Phase 3: SQLite
-batch rebuilds are the riskiest thing in this project.
+Phase 3's migration was **rehearsed on a full copy of `gym.db`** (including a downgrade/re-upgrade
+round trip) and passed the verification suite there *before* being applied to the real file. Do
+the same for later phases: SQLite batch rebuilds are the riskiest thing in this project.
 
 ---
 
@@ -1044,37 +1145,24 @@ in **§2.10**, resulting schema in **§3**. Do not redo this work.
 Deliberately **not** done in Phase 2, still open: everything in **§5.2**, plus
 `PRAGMA foreign_keys=ON` (§5.12) and a test suite (§5.9).
 
-## The next task is: PHASE 3 — Set & Tracking.
+## ✅ PHASE 3 — Set & Tracking: **COMPLETED**
 
-Scope is defined by the **locked decisions in §4.3 and §4.4** — implement them as written; do not
-redesign them. Phase 2 built the Exercise side of tracking; Phase 3 builds the Set side and connects
-the two.
+Delivered: revision **`88e993067758`** on top of `da9c526717c0`. Nullable `reps`, `weight_kg`
+`DECIMAL(6,2)` (0 distinct from NULL), `duration_seconds`, `distance_meters`, RPE (0–10 / 0.5),
+RIR (0–5), `set_type` default `working`, and service-layer primary-metric validation on write.
+All 58 existing sets kept their ids; set 38 was not rewritten. Nested workout routes only — no
+granular Set APIs, no PUT rewrite, no frontend redesign. Full detail in **§2.11**, resulting
+schema in **§3**. Do not redo this work.
 
-Requirements:
+Deliberately **not** done in Phase 3, still open: everything in **§5.3**, plus
+`PRAGMA foreign_keys=ON` (§5.12) and a test suite (§5.9).
 
-- **Implement §4.4 (Set model) and the Set half of §4.3.** `weight_kg` nullable
-  `DECIMAL(6,2)` (with `0` semantically distinct from NULL), `duration_seconds` and
-  `distance_meters` nullable INTEGER, `RPE` (0–10 in 0.5 steps), `RIR` (0–5, 5 meaning "5+"),
-  `set_type` = `warmup | working | dropset` default `working`. RPE/RIR stay backend-only.
-- **Enforce "a Set must contain the Exercise primary metric"** (§4.3) by reading
-  `exercise_tracking` — that is the deferred rule §5.2 hands over. Secondary metrics stay optional.
-- Nothing from §4.1/§4.2 (Templates) or §4.7 (granular APIs) — those remain Phases 4–5. Do not
-  replace the destructive workout PUT yet (§5.5).
-- **Back up `backend/gym.db` first** (timestamped copy, §6) and record the row counts.
-- **Write a real Alembic revision on top of `da9c526717c0`.** `reps` becoming nullable and `weight`
-  becoming `DECIMAL(6,2)` are both value-safe conversions that need `batch_alter_table` on SQLite,
-  and the `FLOAT → DECIMAL` step needs an explicit, verified data conversion — autogenerate will not
-  write it. All 58 existing sets have `reps` and a `weight`, none with `weight = 0` (§6).
-- **Rehearse on a copy of `gym.db` before touching the real file** (§6). The migration must preserve
-  all existing rows and primary key values, including the `sets` id gaps.
-- **Verify row counts before and after**, re-run `alembic check`, and re-check
-  `pragma foreign_key_check`.
-- **Verify the app still boots and behaves**: `/api/health`, login, list workouts, workout detail
-  (verification is still manual — §2.7).
-- Remember that **foreign keys are not enforced at runtime** (§5.12); do not rely on the database to
-  reject bad references in a data migration.
+## The next task is: PHASE 4 — Templates.
 
-- **STOP after Phase 3.** Do not begin Phase 4 in the same change. Report results and wait.
+Scope is defined by the **locked decisions in §4.1 and §4.2** — implement them as written; do not
+redesign them. Do not start Phase 5 (granular Set APIs) or Phase 6 (frontend) in the same change.
+
+- **STOP after Phase 4.** Do not begin Phase 5 in the same change. Report results and wait.
 
 ---
 
@@ -1087,8 +1175,8 @@ Requirements:
 |---|---|---|
 | **Phase 1** | Alembic Foundation — Alembic + baseline `f3f47238398b` of the existing DB (§2.9) | ✅ **COMPLETED** |
 | **Phase 2** | Exercise Domain — global vs. personal, slugs, synonyms/aliases, tracking metadata, archiving (per §4.5) — revision `da9c526717c0` (§2.10) | ✅ **COMPLETED** |
-| **Phase 3** | Set / tracking domain (Set-side tracking validation, nullable `weight_kg` as DECIMAL(6,2), duration, distance, RPE, RIR, `set_type` — per §4.3/§4.4) | ← **NEXT** (§7) |
-| **Phase 4** | Templates (separate entity, global immutable + personal, start-template-creates-Session, save-Session-as-My-Template derivation — per §4.1/§4.2) | not started |
+| **Phase 3** | Set / tracking domain (Set-side tracking validation, nullable `weight_kg` as DECIMAL(6,2), duration, distance, RPE, RIR, `set_type` — per §4.3/§4.4) — revision `88e993067758` (§2.11) | ✅ **COMPLETED** |
+| **Phase 4** | Templates (separate entity, global immutable + personal, start-template-creates-Session, save-Session-as-My-Template derivation — per §4.1/§4.2) | ← **NEXT** (§7) |
 | **Phase 5** | Granular Session/Set APIs (stable IDs, `POST /workout-exercises/{id}/sets`, `PATCH`/`DELETE /sets/{id}`, `order_index` normalization — per §4.7) | not started |
 | **Phase 6** | Frontend adaptation to the new domain and APIs | not started |
 | **Phase 7** | AI / voice layer (later) | not started |
@@ -1113,13 +1201,13 @@ Explicitly out of scope until the corresponding phase is reached:
   (§6, §5.13).
 - **No `PRAGMA foreign_keys=ON` as a drive-by change.** It is a runtime behavior change (§5.12);
   it needs an explicit decision, not a "while we're here" fix.
-- **No Templates and no granular Set APIs during Phase 3.** Templates are Phase 4 (§4.1/§4.2) and the
+- **No granular Set APIs during Phase 4.** Templates are the current phase (§4.1/§4.2). The
   granular `POST /workout-exercises/{id}/sets` / `PATCH`/`DELETE /sets/{id}` surface is Phase 5
   (§4.7). Do not replace the destructive workout PUT yet (§5.5).
-- **No broad frontend Exercise UI.** No tracking UI, no personal-exercise or archive/restore screens,
-  no `ExercisePicker` redesign — that is Phase 6 (§5.2). Phase 2's one-line null-safety guard was a
-  compatibility fix and is not a precedent for further frontend work.
-- **No broad refactor unrelated to the active phase.** In particular, during Phase 3 do **not**:
+- **No broad frontend Exercise / Set UI.** No tracking UI, no personal-exercise or archive/restore
+  screens, no `ExercisePicker` redesign, no RPE/RIR fields — that is Phase 6 (§5.2, §5.3). The
+  `weight` alias is a compatibility shim and is not a precedent for further frontend work.
+- **No broad refactor unrelated to the active phase.** In particular, during Phase 4 do **not**:
   migrate models to SQLAlchemy 2.0 `Mapped[]` style, introduce TypeScript, restructure folders,
   delete the dead frontend code from §5.11, rewrite the stale docs, or reformat files. Note them,
   leave them.
@@ -1154,7 +1242,8 @@ gym-tracker-app/
 │   │   ├── env.py               # URL from app settings; target_metadata = Base.metadata
 │   │   └── versions/
 │   │       ├── f3f47238398b_baseline_existing_schema.py   # baseline; downgrade() DROPS ALL ⚠️
-│   │       └── da9c526717c0_exercise_domain_foundation.py # Phase 2; head
+│   │       ├── da9c526717c0_exercise_domain_foundation.py # Phase 2
+│   │       └── 88e993067758_set_tracking_domain.py        # Phase 3; head
 │   ├── start.bat                # Windows launcher (kills orphan :8000, alembic upgrade head, venv)
 │   ├── Dockerfile / docker-compose.yml   # CMD runs `alembic upgrade head` before uvicorn
 │   ├── scripts/seed_db.py       # `python -m scripts.seed_db` (requires a migrated schema)
@@ -1170,7 +1259,7 @@ gym-tracker-app/
 │       ├── auth/                # models(User) schemas service routes
 │       ├── exercises/           # models(Exercise, ExerciseTracking, ExerciseSynonym, TrackingType),
 │       │                        #   normalization.py, schemas, service (scoping/CRUD/resolver), routes
-│       ├── workouts/            # models(Workout, WorkoutExercise, Set) schemas service routes
+│       ├── workouts/            # models(Workout, WorkoutExercise, Set, SetType) schemas service routes
 │       └── seed/                # exercises_seed.py (23 globals w/ slug + tracking + aliases)
 │                                #   + seeder.py (idempotent, keyed by slug)
 └── frontend/
@@ -1202,7 +1291,8 @@ gym-tracker-app/
 |---|---|
 | Migrations (any phase) | `backend/alembic/env.py`, `backend/alembic.ini`, `backend/alembic/versions/`, `backend/app/core/database.py`, `backend/app/core/config.py` |
 | Exercise domain (done — Phase 2) | `backend/app/exercises/*` (incl. `normalization.py`), `backend/app/seed/*`, §2.10, §4.5 |
-| Phase 3 — Set / tracking (**next**) | `backend/app/workouts/models.py`, `backend/app/workouts/schemas.py`, `backend/app/exercises/models.py` (`ExerciseTracking`, `TrackingType`), §4.3/§4.4 |
+| Phase 3 — Set / tracking (done) | `backend/app/workouts/{models,schemas,service}.py`, §2.11, §4.3/§4.4 |
+| Phase 4 — Templates (**next**) | §4.1 / §4.2, `backend/app/workouts/` (do **not** follow the obsolete template TODOs) |
 | Granular Set APIs | `backend/app/workouts/service.py` (see `update_workout`), `backend/app/workouts/routes.py` |
 | Response/error conventions | `backend/app/core/response.py`, `backend/app/core/exceptions.py` |
 | Frontend API layer | `frontend/src/api/axiosClient.js` |
@@ -1246,8 +1336,9 @@ gym-tracker-app/
 .\.venv\Scripts\python.exe -m alembic -x db_url=sqlite:///C:/temp/scratch.db upgrade head
 ```
 
-- Current state: `alembic current` and `alembic heads` both report **`da9c526717c0 (head)`**, and
-  `alembic check` is clean. The graph is linear: `f3f47238398b → da9c526717c0`.
+- Current state: `alembic current` and `alembic heads` both report **`88e993067758 (head)`**, and
+  `alembic check` is clean. The graph is linear:
+  `f3f47238398b → da9c526717c0 → 88e993067758`.
 - Alembic reads `DATABASE_URL` through `app/core/config.py` — the same source the app uses.
   `sqlalchemy.url` in `alembic.ini` is blank **on purpose**; do not fill it in.
 - ⚠️ **Never run `alembic downgrade` against `gym.db`** — the baseline's `downgrade()` drops every
@@ -1273,7 +1364,7 @@ Copy-Item gym.db "gym.db.backup-$(Get-Date -Format yyyyMMdd-HHmmss)"
 ```
 
 These snapshots are git-ignored via `*.db.backup-*` in `backend/.gitignore`. Existing snapshots are
-listed in §6; the Phase 2 rollback point is `gym.db.backup-20260901-091115`.
+listed in §6; the Phase 3 rollback point is `gym.db.backup-20260906-225407`.
 
 ### Inspect the database
 
@@ -1350,7 +1441,7 @@ stale the moment anything is committed. Describe state semantically — by phase
 id, by what was verified — so this document only changes when the *project state* changes, not when
 the repository does.
 
-**Last verified:** 2026-09-01, after Phase 2 (Exercise Domain) completed. Locked decisions in §4 were
-**not** touched by that update and remain exactly as originally agreed — §4.5 in particular is now
-*implemented* (§2.2, §2.10) rather than merely decided, apart from the template-cleanup rule
-deliberately deferred to Phase 4 (§5.2).
+**Last verified:** 2026-09-06, after Phase 3 (Set & Tracking) completed. Locked decisions in §4 were
+**not** touched by that update and remain exactly as originally agreed — §4.3 / §4.4 are now
+*implemented* (§2.4, §2.11) rather than merely decided, apart from granular Set APIs (Phase 5)
+and frontend adaptation (Phase 6).
