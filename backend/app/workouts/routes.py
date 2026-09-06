@@ -1,14 +1,25 @@
 """Workouts HTTP routes.
 
 All endpoints require JWT authentication via `get_current_user` and are
-scoped to the authenticated user's own workouts.
+scoped to the authenticated user's own workouts. Child resources are
+resolved through the parent Session so another user can never mutate
+someone else's WorkoutExercise or Set.
 
 Endpoints (mounted under /api by main.py):
     GET    /workouts
     POST   /workouts
     GET    /workouts/{workout_id}
     PUT    /workouts/{workout_id}
+    PATCH  /workouts/{workout_id}
     DELETE /workouts/{workout_id}
+    POST   /workouts/{workout_id}/complete
+    POST   /workouts/{workout_id}/exercises
+    POST   /workouts/{workout_id}/exercises/reorder
+    DELETE /workout-exercises/{workout_exercise_id}
+    POST   /workout-exercises/{workout_exercise_id}/sets
+    POST   /workout-exercises/{workout_exercise_id}/sets/reorder
+    PATCH  /sets/{set_id}
+    DELETE /sets/{set_id}
 """
 
 from fastapi import APIRouter, Body, Depends, status
@@ -22,8 +33,15 @@ from app.workouts import service
 from app.templates import service as templates_service
 from app.templates.schemas import TemplateDetail, TemplateNameIn
 from app.workouts.schemas import (
+    ReorderIn,
+    SetIn,
+    SetOut,
+    SetPatch,
     WorkoutCreate,
     WorkoutDetail,
+    WorkoutExerciseCreate,
+    WorkoutExerciseOut,
+    WorkoutPatch,
     WorkoutSummary,
     WorkoutUpdate,
 )
@@ -80,8 +98,20 @@ def update_workout(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> dict:
-    """Fully replace a workout's fields and nested exercises/sets."""
+    """Reconcile a workout's scalars and nested tree without recreating matched ids."""
     workout = service.update_workout(db, current_user.id, workout_id, payload)
+    return ok(WorkoutDetail.model_validate(workout))
+
+
+@router.patch("/workouts/{workout_id}")
+def patch_workout(
+    workout_id: int,
+    payload: WorkoutPatch,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Update Session name/date only."""
+    workout = service.patch_workout(db, current_user.id, workout_id, payload)
     return ok(WorkoutDetail.model_validate(workout))
 
 
@@ -97,6 +127,111 @@ def delete_workout(
     `{ success, data, error }` shape stays consistent across the whole API.
     """
     service.delete_workout(db, current_user.id, workout_id)
+    return ok(None)
+
+
+@router.post("/workouts/{workout_id}/complete")
+def complete_workout(
+    workout_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Set ended_at once. Later edits and repeat calls leave it unchanged."""
+    workout = service.complete_workout(db, current_user.id, workout_id)
+    return ok(WorkoutDetail.model_validate(workout))
+
+
+@router.post(
+    "/workouts/{workout_id}/exercises",
+    status_code=status.HTTP_201_CREATED,
+)
+def add_workout_exercise(
+    workout_id: int,
+    payload: WorkoutExerciseCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Attach one catalog exercise to a Session. Creates zero Sets."""
+    row = service.add_workout_exercise(
+        db, current_user.id, workout_id, payload
+    )
+    return ok(WorkoutExerciseOut.model_validate(row))
+
+
+@router.post("/workouts/{workout_id}/exercises/reorder")
+def reorder_workout_exercises(
+    workout_id: int,
+    payload: ReorderIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Reorder Session exercises. IDs and Sets are unchanged."""
+    workout = service.reorder_workout_exercises(
+        db, current_user.id, workout_id, payload
+    )
+    return ok(WorkoutDetail.model_validate(workout))
+
+
+@router.delete("/workout-exercises/{workout_exercise_id}")
+def delete_workout_exercise(
+    workout_exercise_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Remove one Session exercise and its Sets. Compact remaining order."""
+    service.delete_workout_exercise(db, current_user.id, workout_exercise_id)
+    return ok(None)
+
+
+@router.post(
+    "/workout-exercises/{workout_exercise_id}/sets",
+    status_code=status.HTTP_201_CREATED,
+)
+def add_set(
+    workout_exercise_id: int,
+    payload: SetIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Create one Set on a WorkoutExercise."""
+    row = service.add_set(db, current_user.id, workout_exercise_id, payload)
+    return ok(SetOut.model_validate(row))
+
+
+@router.post("/workout-exercises/{workout_exercise_id}/sets/reorder")
+def reorder_sets(
+    workout_exercise_id: int,
+    payload: ReorderIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Reorder Sets under one WorkoutExercise. IDs are unchanged."""
+    row = service.reorder_sets(
+        db, current_user.id, workout_exercise_id, payload
+    )
+    return ok(WorkoutExerciseOut.model_validate(row))
+
+
+@router.patch("/sets/{set_id}")
+def patch_set(
+    set_id: int,
+    payload: SetPatch,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Partial-update one Set. Does not recreate siblings."""
+    row = service.patch_set(db, current_user.id, set_id, payload)
+    return ok(SetOut.model_validate(row))
+
+
+@router.delete("/sets/{set_id}")
+def delete_set(
+    set_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Delete one Set. Compact remaining sibling order_index values."""
+    service.delete_set(db, current_user.id, set_id)
     return ok(None)
 
 

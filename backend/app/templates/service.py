@@ -21,6 +21,7 @@ from app.templates.schemas import (
     TemplateExerciseIn,
     TemplateUpdate,
 )
+from app.core.utc import utc_now
 from app.workouts.models import Set, Workout, WorkoutExercise
 
 
@@ -297,6 +298,8 @@ def start_template(db: Session, user_id: int, template_id: int) -> Workout:
         name=template.name,
         date=_date.today(),
         source_template_id=template.id,
+        started_at=utc_now(),
+        ended_at=None,
     )
     for row in template.exercises:
         workout.exercises.append(

@@ -6,8 +6,9 @@ Three related tables (see architecture.md):
     Set              - individual performed set under a WorkoutExercise
 
 Cascade strategy:
-    - Workout.exercises    -> delete-orphan (replacing the list on PUT removes old rows)
-    - WorkoutExercise.sets -> delete-orphan (same for sets)
+    - Workout.exercises    -> delete-orphan on true parent delete / removed children
+    - WorkoutExercise.sets -> delete-orphan on true parent delete / removed children
+    - Normal updates keep existing child rows and their primary keys
     - User -> Workout      -> CASCADE on delete (DB + ORM)
     - WorkoutExercise -> Exercise: RESTRICT, never delete catalog rows.
 """
@@ -28,6 +29,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
+from app.core.utc import UtcDateTime, utc_now
 
 
 def _planned_pair_sql(min_col: str, max_col: str) -> str:
@@ -52,7 +54,7 @@ SET_TYPE_VALUES: tuple[str, ...] = tuple(t.value for t in SetType)
 
 
 class Workout(Base):
-    """Top-level workout owned by a user."""
+    """Top-level workout owned by a user. This is the performed Session."""
 
     __tablename__ = "workouts"
 
@@ -66,6 +68,8 @@ class Workout(Base):
     name = Column(String(120), nullable=False)
     date = Column(Date, nullable=False, default=lambda: datetime.utcnow().date())
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    started_at = Column(UtcDateTime, nullable=False, default=utc_now)
+    ended_at = Column(UtcDateTime, nullable=True)
     source_template_id = Column(
         Integer,
         ForeignKey("templates.id", ondelete="SET NULL"),

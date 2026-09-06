@@ -19,12 +19,17 @@ function mapWorkoutToForm(workout) {
   const exercises = [...(workout.exercises || [])]
     .sort((a, b) => a.order_index - b.order_index)
     .map((we) => ({
+      workout_exercise_id: we.id,
       exercise_id: we.exercise.id,
       name: we.exercise.name,
       muscle_group: we.exercise.muscle_group,
       sets: [...(we.sets || [])]
         .sort((a, b) => a.order_index - b.order_index)
-        .map((s) => ({ reps: s.reps, weight: s.weight })),
+        .map((s) => ({
+          set_id: s.id,
+          reps: s.reps,
+          weight: s.weight,
+        })),
     }));
 
   return {

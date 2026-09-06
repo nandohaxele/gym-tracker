@@ -31,6 +31,7 @@ from pydantic import (
     model_validator,
 )
 
+from app.core.utc import serialize_utc
 from app.workouts.models import SetType
 
 
@@ -65,10 +66,16 @@ class SetIn(BaseModel):
 
     `weight` is accepted as a compatibility alias for `weight_kg` so the
     current frontend can keep sending the pre-Phase-3 field name.
+    Optional `id` lets PUT match an existing Set without recreating it.
     """
 
     model_config = ConfigDict(populate_by_name=True)
 
+    id: Optional[int] = Field(
+        default=None,
+        gt=0,
+        description="Existing Set id. Omitted by the current frontend.",
+    )
     reps: Optional[int] = Field(
         default=None,
         gt=0,
@@ -157,6 +164,44 @@ class SetOut(BaseModel):
         return None if value is None else float(value)
 
 
+class SetPatch(BaseModel):
+    """Partial update for one Set. Only provided fields are applied."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    reps: Optional[int] = Field(default=None, gt=0)
+    weight_kg: Optional[Decimal] = Field(
+        default=None,
+        ge=0,
+        max_digits=6,
+        decimal_places=2,
+        validation_alias=AliasChoices("weight_kg", "weight"),
+    )
+    duration_seconds: Optional[int] = Field(default=None, gt=0)
+    distance_meters: Optional[int] = Field(default=None, gt=0)
+    rpe: Optional[Decimal] = Field(
+        default=None, ge=0, le=10, max_digits=3, decimal_places=1
+    )
+    rir: Optional[int] = Field(default=None, ge=0, le=5)
+    set_type: Optional[SetType] = None
+    order_index: Optional[int] = Field(default=None, ge=0)
+
+    @field_validator("rpe")
+    @classmethod
+    def _rpe_half_steps(cls, value: Optional[Decimal]) -> Optional[Decimal]:
+        if value is None:
+            return None
+        if value % Decimal("0.5") != 0:
+            raise ValueError("rpe must be in increments of 0.5")
+        return value
+
+
+class ReorderIn(BaseModel):
+    """Ordered permutation of existing child ids."""
+
+    ids: list[int] = Field(default_factory=list)
+
+
 # ---- Embedded exercise reference ----------------------------------------
 
 class ExerciseRefOut(BaseModel):
@@ -184,8 +229,15 @@ class WorkoutExerciseIn(BaseModel):
     `planned_*` is optional. The current frontend does not send it. On PUT,
     omitted planned fields are preserved from the existing Session snapshot
     (see workouts.service). Ad-hoc POST leaves them NULL.
+    Optional `id` lets PUT match an existing WorkoutExercise without
+    recreating it or its Sets.
     """
 
+    id: Optional[int] = Field(
+        default=None,
+        gt=0,
+        description="Existing WorkoutExercise id. Omitted by the current frontend.",
+    )
     exercise_id: int = Field(gt=0, description="Catalog exercise id (must exist).")
     sets: list[SetIn] = Field(default_factory=list)
     order_index: Optional[int] = Field(
@@ -239,6 +291,13 @@ class WorkoutExerciseOut(BaseModel):
     planned_distance_meters_max: Optional[int] = None
 
 
+class WorkoutExerciseCreate(BaseModel):
+    """Attach one catalog exercise to an existing Session. Creates zero Sets."""
+
+    exercise_id: int = Field(gt=0)
+    order_index: Optional[int] = Field(default=None, ge=0)
+
+
 # ---- Workout schemas -----------------------------------------------------
 
 class WorkoutCreate(BaseModel):
@@ -255,14 +314,22 @@ class WorkoutCreate(BaseModel):
 class WorkoutUpdate(BaseModel):
     """Full-update payload for a workout (PUT semantics).
 
-    The nested `exercises` tree fully replaces whatever the workout currently
-    has -- old WorkoutExercise/Set rows are removed via SQLAlchemy's
-    delete-orphan cascade.
+    The nested `exercises` tree is reconciled in place: matched
+    WorkoutExercise / Set rows keep their primary keys. `started_at`,
+    `ended_at`, `created_at`, and `source_template_id` are not in this
+    payload and are never rewritten by PUT.
     """
 
     name: str = Field(min_length=1, max_length=120)
     date: Optional[_date] = None
     exercises: list[WorkoutExerciseIn] = Field(default_factory=list)
+
+
+class WorkoutPatch(BaseModel):
+    """Scalar-only Session update. Does not touch children or clocks."""
+
+    name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    date: Optional[_date] = None
 
 
 class WorkoutSummary(BaseModel):
@@ -274,15 +341,19 @@ class WorkoutSummary(BaseModel):
     name: str
     date: _date
     created_at: datetime
+    started_at: datetime
+    ended_at: Optional[datetime] = None
+
+    @field_serializer("created_at", "started_at", "ended_at")
+    def _timestamps(self, value: Optional[datetime]) -> Optional[str]:
+        return serialize_utc(value)
 
 
 class WorkoutDetail(BaseModel):
     """Full workout response with nested exercises and sets.
 
-    Shape matches the contract defined in the Phase 4 spec:
-        { id, name, date, exercises: [{ id, exercise, sets, order_index }] }
-    `user_id` and `created_at` are included as helpful metadata for clients
-    but are not strictly part of the documented contract.
+    Additive Phase 5 fields: `started_at`, `ended_at`. `date` remains the
+    training calendar day. `ended_at` NULL means the Session is active.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -292,8 +363,14 @@ class WorkoutDetail(BaseModel):
     name: str
     date: _date
     created_at: datetime
+    started_at: datetime
+    ended_at: Optional[datetime] = None
     source_template_id: Optional[int] = None
     exercises: list[WorkoutExerciseOut] = Field(default_factory=list)
+
+    @field_serializer("created_at", "started_at", "ended_at")
+    def _timestamps(self, value: Optional[datetime]) -> Optional[str]:
+        return serialize_utc(value)
 
 
 # TODO (future): WorkoutTemplate schemas -- a separate flow where saved

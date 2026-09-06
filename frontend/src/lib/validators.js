@@ -76,6 +76,8 @@ const blankToUndefined = (value) =>
   value === '' || value === null ? undefined : value;
 
 export const setSchema = z.object({
+  // Server Set.id. Named set_id so react-hook-form's field `id` is not reused.
+  set_id: z.number().int().positive().optional(),
   reps: z.preprocess(
     blankToUndefined,
     z.coerce
@@ -92,6 +94,7 @@ export const setSchema = z.object({
 });
 
 export const workoutExerciseSchema = z.object({
+  workout_exercise_id: z.number().int().positive().optional(),
   exercise_id: z.coerce.number().int().positive(),
   // Solo per la UI, non inviati al backend.
   name: z.string().optional(),

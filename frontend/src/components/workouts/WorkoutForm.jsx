@@ -37,9 +37,13 @@ function toPayload(values) {
     name: values.name.trim(),
     date: values.date,
     exercises: values.exercises.map((ex, exIndex) => ({
+      ...(ex.workout_exercise_id
+        ? { id: Number(ex.workout_exercise_id) }
+        : {}),
       exercise_id: Number(ex.exercise_id),
       order_index: exIndex,
       sets: ex.sets.map((set, setIndex) => ({
+        ...(set.set_id ? { id: Number(set.set_id) } : {}),
         reps: Number(set.reps),
         weight: Number(set.weight),
         order_index: setIndex,

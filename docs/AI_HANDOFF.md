@@ -10,12 +10,14 @@
 > **Project state:** **Phase 1 — Alembic Foundation: COMPLETED** (§2.9) ·
 > **Phase 2 — Exercise Domain: COMPLETED** (§2.10) ·
 > **Phase 3 — Set & Tracking: COMPLETED** (§2.11) ·
-> **Phase 4 — Templates: COMPLETED** (§2.12).
-> Alembic owns schema evolution: baseline **`f3f47238398b`**, head **`68505223da63`**.
-> Templates are a separate entity from Workout Sessions. Start copies
-> `TemplateExercise.target_*` onto `WorkoutExercise.planned_*` and creates
-> zero Set rows. Existing data preserved (9 / 23 / 8 / 17 / 58), templates 0 / 0.
-> **Next task: Phase 5 — Granular Session/Set APIs** (§7).
+> **Phase 4 — Templates: COMPLETED** (§2.12) ·
+> **Phase 5 — Granular Session/Set APIs: COMPLETED** (§2.13).
+> Alembic owns schema evolution: baseline **`f3f47238398b`**, head **`0153e917bf85`**.
+> `Workout` remains the Session. `started_at` / `ended_at` exist; NULL
+> `ended_at` means active. PUT reconciles children in place. Granular
+> WorkoutExercise and Set APIs are live. Existing data preserved
+> (9 / 23 / 8 / 17 / 58), templates 0 / 0. Child ids unchanged.
+> **Next task: Phase 6 — Frontend adaptation** (§7).
 >
 > This document deliberately records **no commit hash**. Git is the source of truth for revision
 > history — run `git log`/`git status` if you need it. Describe state semantically here so this file
@@ -52,7 +54,7 @@ first-class concern.
 | Validation | Pydantic 2.9.2 + `pydantic-settings` 2.5.2 |
 | Auth | JWT bearer HS256 via `python-jose`; password hashing via `passlib[bcrypt]` with **`bcrypt` pinned to 4.0.1** (passlib 1.7.4 breaks on bcrypt ≥ 4.1 — do not bump it casually; the reason is documented in `requirements.txt`) |
 | Server | uvicorn 0.30.6 |
-| Migrations | **Alembic 1.13.3** — baseline `f3f47238398b`, head `68505223da63`; `create_all()` removed from startup (see §2.9–§2.12) |
+| Migrations | **Alembic 1.13.3** — baseline `f3f47238398b`, head `0153e917bf85`; `create_all()` removed from startup (see §2.9–§2.13) |
 | Tests | **NONE** (no test files, no pytest/httpx in `requirements.txt`) |
 
 ## Current frontend stack
@@ -85,7 +87,7 @@ backend/
   alembic.ini          # Alembic config; sqlalchemy.url intentionally blank
   alembic/             # migration environment
     env.py             # reads DATABASE_URL from app settings; target_metadata = Base.metadata
-    versions/          # f3f47238398b -> da9c526717c0 -> 88e993067758 -> 68505223da63
+    versions/          # f3f47238398b -> da9c526717c0 -> 88e993067758 -> 68505223da63 -> 0153e917bf85
   scripts/seed_db.py   # CLI seeding entrypoint (NOT under app/)
   app/
     main.py            # app factory: CORS, model imports, router mounting (no create_all)
@@ -178,15 +180,24 @@ A Session started from a Template is still a `Workout`; it carries optional prov
 (`source_template_id`) and a frozen plan on each `WorkoutExercise.planned_*`. Ad-hoc
 Sessions (the existing 8, and `POST /api/workouts`) leave those columns NULL.
 
+Session clocks (Phase 5): timezone-aware `started_at` (NOT NULL) and nullable
+`ended_at`. `ended_at IS NULL` = active; non-NULL = completed. There is no status
+enum. `date` remains the training calendar day and is independently editable.
+Editing a completed Session never rewrites `ended_at` or `started_at`.
+
 Endpoints (all auth-scoped to the current user):
 
 | Method | Path | Behavior |
 |---|---|---|
 | GET | `/api/workouts` | list, ordered `date DESC, created_at DESC`, no nested tree, no pagination |
-| POST | `/api/workouts` | create with optional nested exercises + sets, 201 |
-| GET | `/api/workouts/{id}` | full nested detail, eager-loaded via `selectinload` |
-| PUT | `/api/workouts/{id}` | **full replace** of scalars *and* the whole nested tree |
+| POST | `/api/workouts` | create with optional nested exercises + sets, 201. Nested Sets → retrospective completed (date-midnight UTC sentinel). No Sets → active (`started_at=now`, `ended_at` NULL) |
+| GET | `/api/workouts/{id}` | full nested detail, eager-loaded via `selectinload` (`populate_existing`) |
+| PUT | `/api/workouts/{id}` | **in-place reconcile** of scalars + nested tree; matched child ids stay |
+| PATCH | `/api/workouts/{id}` | name/date only; clocks and children untouched |
 | DELETE | `/api/workouts/{id}` | deletes workout + cascade children, returns 200 with `data: null` |
+| POST | `/api/workouts/{id}/complete` | set `ended_at = now(UTC)` if NULL; idempotent |
+| POST | `/api/workouts/{id}/exercises` | attach one catalog exercise, zero Sets |
+| POST | `/api/workouts/{id}/exercises/reorder` | permutation of existing WE ids; ids unchanged |
 | POST | `/api/workouts/{id}/save-as-template` | derive a personal Template from recorded Sets (§2.12) |
 
 Implementation notes that matter:
@@ -200,16 +211,20 @@ Implementation notes that matter:
   identically as "Unknown exercise_id(s)", so the error never confirms that someone else's exercise
   exists. Reads (`get_workout`) deliberately do **not** filter, so history stays readable.
 - `order_index` is optional in the payload and falls back to the array position.
-- **`update_workout` reassigns `workout.exercises`**, which triggers `delete-orphan` cascade. This
-  **destroys and recreates all `WorkoutExercise` and `Set` rows with new primary keys** on every PUT.
-  This is confirmed by the live DB: 17 `workout_exercises` rows but `max(id) = 32`; 58 `sets` rows but
-  `max(id) = 98`. See §5. Phase 4 does **not** replace that PUT. It preserves `planned_*` across the
-  rebuild by sequential same-`exercise_id` matching when the client omits those fields (the current
-  frontend never sends them). `source_template_id` is a Workout scalar and is not part of the PUT
-  body, so provenance survives. Ad-hoc `POST /api/workouts` leaves `planned_*` NULL.
+- **`update_workout` reconciles in place** (Phase 5). Child `id`s are authoritative: a
+  supplied id must belong to this Session or the write is NotFound. Omitted ids are
+  **new rows**. When the whole tree omits ids (legacy client), a temporary fallback
+  matches unique `exercise_id`s and same-count Sets by order; duplicate exercises or a
+  Set count change is **rejected** rather than guessing. New attaches are
+  archive/ownership-checked; already-attached archived exercises stay editable.
+  Omitted `planned_*` is preserved on the matched row. Clocks and
+  `source_template_id` are never rewritten. The current editor now plumbs child ids
+  through form state (non-visual). Live ID gaps (WE `max=32` / 17 rows; Set `max=98`
+  / 58 rows) are the fingerprint of **pre-Phase-5** PUT churn. Ad-hoc
+  `POST /api/workouts` still leaves `planned_*` NULL.
 
-**NOT implemented:** session start/end timestamps, active vs. completed state, notes,
-per-session duration, granular child-resource endpoints, pagination. Templates: §2.12.
+**NOT implemented:** notes, per-session duration, pagination. Granular child APIs: §2.4 / §2.13.
+Templates: §2.12. Frontend adaptation: Phase 6.
 
 ## 2.4 Sets — IMPLEMENTED (Phase 3)
 
@@ -228,10 +243,18 @@ The Set-side tracking model from §4.3 / §4.4 is implemented. Full delivery det
 - Nested workout `SetIn` accepts `weight` as a compatibility alias for `weight_kg`; `SetOut`
   emits both so the current frontend keeps working. RPE/RIR are accepted and returned but have
   no UI.
-- Sets still exist only as part of the nested workout tree. **There are no `/sets` endpoints.**
-  The destructive whole-workout PUT is unchanged.
+- Granular Set APIs (Phase 5): `POST /api/workout-exercises/{id}/sets`,
+  `PATCH /api/sets/{id}`, `DELETE /api/sets/{id}`, plus
+  `POST /api/workout-exercises/{id}/sets/reorder`. Ownership is resolved through
+  `Set → WorkoutExercise → Workout.user_id`. Cross-user access is 404.
+  `order_index` is compacted to `0..N` after insert/delete/reorder. Sibling
+  rows are never recreated. Primary-metric validation runs on every new or
+  edited Set. Historical set 38 stays readable; editing it without
+  `duration_seconds` is still 422.
 
-**NOT implemented:** granular Set APIs (Phase 5), frontend tracking fields (Phase 6).
+**NOT implemented:** frontend tracking fields (Phase 6). The dead
+`frontend/src/api/sets.js` still documents `POST /sets` + `PUT /sets/{id}` and
+is unused — do not implement those paths.
 
 ## 2.5 Frontend pages / features — IMPLEMENTED
 
@@ -286,8 +309,17 @@ GET    /api/workouts
 POST   /api/workouts
 GET    /api/workouts/{workout_id}
 PUT    /api/workouts/{workout_id}
+PATCH  /api/workouts/{workout_id}
 DELETE /api/workouts/{workout_id}
+POST   /api/workouts/{workout_id}/complete
+POST   /api/workouts/{workout_id}/exercises
+POST   /api/workouts/{workout_id}/exercises/reorder
 POST   /api/workouts/{workout_id}/save-as-template
+DELETE /api/workout-exercises/{workout_exercise_id}
+POST   /api/workout-exercises/{workout_exercise_id}/sets
+POST   /api/workout-exercises/{workout_exercise_id}/sets/reorder
+PATCH  /api/sets/{set_id}
+DELETE /api/sets/{set_id}
 GET    /api/templates
 POST   /api/templates
 GET    /api/templates/{template_id}
@@ -315,11 +347,10 @@ Note for whoever builds the real suite: `httpx` is **not installed**, so
 
 ## 2.8 Known inconsistencies (verified)
 
-1. **`/sets` endpoints are documented and called but do not exist.** `api_contract.md` lists
-   `POST /sets`, `PUT /sets/{id}`, `DELETE /sets/{id}`, and `frontend/src/api/sets.js` exports
-   `createSet/updateSet/deleteSet` hitting those paths. The backend implements none of them. The
-   frontend module is currently **dead code** (imported by no component), so it does not break the
-   app — it would 404 if used.
+1. **`frontend/src/api/sets.js` still documents the wrong Set URLs.** `api_contract.md` and
+   that dead module list `POST /sets`, `PUT /sets/{id}`, `DELETE /sets/{id}`. Phase 5 implemented
+   the locked surface instead (`POST /workout-exercises/{id}/sets`, `PATCH`/`DELETE /sets/{id}`).
+   The module is imported by no component, so it does not break the app. Update it in Phase 6.
 2. **`PRD.md` lists "programs or templates" as a non-goal**, which directly contradicts the locked
    decision that Templates are a core entity (§4). The locked decisions win.
 3. **`architecture.md` schema is stale**: it shows `WorkoutExercise` without `order_index`, which
@@ -327,7 +358,7 @@ Note for whoever builds the real suite: `httpx` is **not installed**, so
 4. **`docs/project-status.md` is stale**: it declares the current phase to be "Phase 5 Step 3
    (Rest Timer, UX Polish, Empty States, Loading Skeletons)". Empty/error states are already
    implemented (`StatusView`), Phases 1 (Alembic) and 2 (Exercise domain) are now **complete**, and
-   the real next task is **Phase 5 — Granular Session/Set APIs** (§7).
+   the real next task is **Phase 6 — Frontend adaptation** (§7).
    ⚠️ **Phase-numbering collision:** the old frontend-era numbering ("Phase 5 Step 3") is unrelated to
    the new domain roadmap numbering in §8. Use §8 numbering from now on.
 5. **`docs/decision-log.md` is empty (0 bytes)** despite being the designated place for decisions.
@@ -651,15 +682,89 @@ omitted; archive strips the owner's personal templates only; save-as-template de
 (including plank 200–200 / no duration / no weight); no `/sets` routes; no `started_at` /
 `ended_at`. Live `gym.db` received **no** test templates.
 
+## 2.13 Session lifecycle and granular APIs — IMPLEMENTED (Phase 5, COMPLETED)
+
+**Migration revision: `0153e917bf85`** ("session lifecycle"),
+`down_revision = "68505223da63"`. Locked decisions are in **§4.6 / §4.7**.
+
+### What exists
+
+- **`workouts.started_at`** NOT NULL. SQLite `DateTime(timezone=True)` strips
+  tzinfo on read; `app.core.utc.UtcDateTime` re-attaches UTC so ORM/API values
+  are always aware. Writes use `utc_now()` or `date_midnight_utc`. Historical 8
+  rows were backfilled to UTC midnight of their stored `date` (unknown-time
+  sentinel). Workout 9 keeps `date=2026-07-02`; `created_at` (2026-07-03 07:00:55)
+  was **not** copied. Retrospective `POST /workouts` with Sets uses the same
+  sentinel on `payload.date`. Zero elapsed time on sentinel rows means
+  "historical time unknown", not a measured zero-minute workout.
+- **`workouts.ended_at`** nullable. NULL = active. Historical and retrospective
+  creates have `ended_at = started_at`. Template Start and empty creates stay
+  active.
+- **`date` and `created_at` are unchanged.** `date` stays the user-facing training
+  day and is independently editable. Changing `date` does not rewrite clocks.
+- **No status enum. No table rename.** `Workout` remains the Session entity.
+- **PUT is non-destructive.** Matched WorkoutExercise / Set rows keep their ids.
+  `delete-orphan` only removes children that left the reconciled collection.
+- **Granular WorkoutExercise APIs:** `POST /workouts/{id}/exercises`,
+  `DELETE /workout-exercises/{id}`, `POST /workouts/{id}/exercises/reorder`.
+  Add creates zero Sets and NULL `planned_*`. Archived exercises cannot be newly
+  attached; historical references stay readable/editable.
+- **Granular Set APIs:** locked paths only (see §2.4). Reorder included so
+  order changes never rewrite ids.
+- **`PATCH /workouts/{id}`** scalars only. **`POST /workouts/{id}/complete`**
+  is the only post-create writer of `ended_at` (idempotent).
+- **Template Start** sets `started_at=now(UTC)`, `ended_at=NULL` (active).
+- **`order_index`** is compacted to `0..N` after insert/delete/reorder.
+- **`weight` alias** remains on Set I/O until Phase 6.
+- **PRAGMA foreign_keys** left off.
+- **Narrow frontend ID plumbing** (allowed Phase 5 exception, not Phase 6):
+  editor state keeps `workout_exercise_id` / `set_id` (RHF's own `id` is not
+  reused) and PUT sends them as `id`. New client-side rows have no id.
+
+### Files
+
+Created: `backend/alembic/versions/0153e917bf85_session_lifecycle.py`,
+`backend/app/core/utc.py`.
+
+Modified: `app/workouts/{models,schemas,service,routes}.py`,
+`app/templates/service.py` (Start clocks only),
+`frontend/src/pages/WorkoutEditorPage.jsx`,
+`frontend/src/components/workouts/WorkoutForm.jsx`,
+`frontend/src/lib/validators.js` (optional ids only).
+
+### Verification performed
+
+Data safety on the real `gym.db`, rehearsed first on a full copy (including a
+downgrade/re-upgrade that is reversible while every `started_at` is the
+date-midnight sentinel and no Session is active). `downgrade()` refuses if any
+`ended_at IS NULL`, if `started_at` is not the date-midnight sentinel, or if
+`ended_at` differs from that sentinel.
+
+Row counts still 9 / 23 / 8 / 17 / 58 plus templates 0 / 0; identical workout /
+workout_exercise / set id sets; workout 9 `started_at` is 2026-07-02T00:00:00Z;
+set 38 untouched; planned_* and provenance still NULL; `pragma foreign_key_check`
+and `integrity_check` clean; `alembic current` = `heads` = `0153e917bf85`;
+`alembic check` clean.
+
+Behavioral checks on a scratch copy: ID-bearing and unambiguous ID-less PUT keep
+child ids; ambiguous ID-less PUT rejects; retrospective POST uses the date
+sentinel; empty POST is active; PATCH name does not touch `ended_at`; complete
+is idempotent; add/reorder/delete WE and Set keep sibling ids; primary tracking
+on new Sets; PATCH merges persisted primary; set 38 readable and weight-PATCH
+grandfathered; nulling its primary rejected; cross-user child writes 404; Start
+is active with snapshot; `planned_*` / provenance survive PUT; UTC-aware
+round-trip after SQLite. Live `gym.db` received **no** test Sessions.
+
 ---
 
 # 3. CURRENT DATABASE SCHEMA
 
 This is the **exact live schema** of `backend/gym.db`, dumped from `sqlite_master` on 2026-09-06,
-i.e. at revision `68505223da63`. `users` is still what `create_all()` produced and the baseline
+i.e. at revision `0153e917bf85`. `users` is still what `create_all()` produced and the baseline
 reproduces; **`exercises` was widened and two tables were added by Phase 2** (§2.10);
 **`sets` was rebuilt by Phase 3** (§2.11); **Phase 4 added `templates` / `template_exercises`,
-`workouts.source_template_id`, and `workout_exercises.planned_*`**. `alembic_version` is listed
+`workouts.source_template_id`, and `workout_exercises.planned_*`**; **Phase 5 added
+`workouts.started_at` and `workouts.ended_at`**. `alembic_version` is listed
 at the end.
 
 Formatting note: SQLite quotes the table name (`CREATE TABLE "exercises"`) after a
@@ -745,6 +850,8 @@ CREATE TABLE "workouts" (
     name               VARCHAR(120) NOT NULL,
     date               DATE NOT NULL,
     created_at         DATETIME NOT NULL,
+    started_at         DATETIME NOT NULL,    -- timezone-aware UTC; historical = date 00:00Z
+    ended_at           DATETIME,             -- NULL = active; non-NULL = completed
     source_template_id INTEGER,              -- provenance only; NULL for ad-hoc
     PRIMARY KEY (id),
     FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
@@ -901,10 +1008,10 @@ CREATE TABLE alembic_version (
 );
 ```
 
-It currently holds exactly one row: **`68505223da63`** (it held `f3f47238398b` after Phase 1,
-`da9c526717c0` after Phase 2, and `88e993067758` after Phase 3). This is Alembic's own
-bookkeeping — it is **not** part of the domain model, has no relationships, and must never
-be edited by hand.
+It currently holds exactly one row: **`0153e917bf85`** (it held `f3f47238398b` after Phase 1,
+`da9c526717c0` after Phase 2, `88e993067758` after Phase 3, and `68505223da63` after
+Phase 4). This is Alembic's own bookkeeping — it is **not** part of the domain model,
+has no relationships, and must never be edited by hand.
 
 ## Uniqueness rules, stated plainly
 
@@ -1123,16 +1230,19 @@ All storage uses canonical units. Any unit conversion is a presentation concern.
 >
 > ✅ **Resolved by Phase 4** and removed from this list: *"The `Template` entity does not exist at
 > all"* (old item 7) and the deferred archive→template cleanup. Phase 4 added item 22.
+>
+> ✅ **Resolved by Phase 5** and removed from this list: *"The current workout update rebuilds
+> WorkoutExercise and Set rows"* (old item 5) and the missing Session clocks / granular Set
+> APIs. Phase 5 added items 23–24. Numbers of remaining items are **not** renumbered.
 
 1. **SQLite holds existing real data** (`backend/gym.db`, 9 users / 8 workouts / 58 sets). Migrations
    must be non-destructive. See §6.
-4. **The frontend calls `/sets` endpoints that the backend does not implement.**
+4. **The frontend `sets.js` module still calls the wrong Set URLs.**
    `frontend/src/api/sets.js` (+ `api_contract.md`) describe `POST /sets`, `PUT /sets/{id}`,
-   `DELETE /sets/{id}`. None exist. Currently harmless because the module is unused, but it is a trap.
-5. **The current workout update rebuilds `WorkoutExercise` and `Set` rows and changes their IDs.**
-   `update_workout` reassigns `workout.exercises`, relying on `delete-orphan`. Live evidence of the
-   churn: `sets` has 58 rows but `max(id) = 98`; `workout_exercises` has 17 rows but `max(id) = 32`.
-   This **violates the locked decision in §4.7** and must be replaced by granular operations.
+   `DELETE /sets/{id}`. Phase 5 implemented the locked nested/PATCH surface instead. Currently
+   harmless because the module is unused. Update or delete it in Phase 6.
+5. ✅ **Resolved by Phase 5.** PUT reconciles children in place. Pre-Phase-5 ID gaps remain
+   as historical fingerprint (17 WE / max 32; 58 Sets / max 98) and are not data loss.
 6. **Workout date handling is inconsistent and can be wrong around local midnight.**
    `Workout.date` has model default `lambda: datetime.utcnow().date()` (UTC) while
    `service.create_workout` uses `date.today()` (server-local). The service value always wins for
@@ -1201,11 +1311,16 @@ All storage uses canonical units. Any unit conversion is a presentation concern.
     succeed; a PUT of workout 5 that resubmits that set without `duration_seconds` is a 422
     until Phase 6 can send duration. Do not invent a duration in a later migration. Saving
     workout 5 as a template derives `target_reps 200–200` and NULL duration — that is correct.
-22. **Legacy PUT preserves `planned_*` by sequential same-`exercise_id` matching**, not by
-    stable child IDs. That is enough for the current frontend (it never reorders by sending
-    planned fields, and live Sessions have unique `exercise_id`s per workout). Duplicate
-    `exercise_id`s in one Session make the mapping first-come-first-served. Phase 5's stable
-    IDs will make this transitional strategy unnecessary.
+22. **Legacy ID-less PUT is a temporary fallback** until Phase 6 drops the nested tree.
+    It matches unique `exercise_id`s and same-count Sets by order. Duplicate exercises or
+    a Set count change is rejected. The current editor now sends child ids.
+23. **Historical `started_at` / `ended_at` are date-midnight UTC sentinels**, not real gym
+    clocks. Workout 9 is the proof case: `date=2026-07-02`, `created_at=2026-07-03 07:00:55`.
+    Do not later "fix" those timestamps from `created_at`. New Sessions get real `now(UTC)`.
+24. **`get_workout` / `get_workout_exercise` use `populate_existing=True`** so reorder
+    results are returned in `order_index` order even when the Session object is already in
+    the identity map (`expire_on_commit=False`). Do not drop that without another way to
+    refresh collection order.
 
 ## 5.1 Fixed during Phase 1 — pre-existing `seed_db` bug
 
@@ -1248,7 +1363,7 @@ These are **not** oversights.
 
 | Deferred behavior | Where it belongs | Why it was left |
 |---|---|---|
-| **Granular Set APIs and replacing the destructive PUT** (§4.7, §5.5) | **Phase 5** | Nested `POST`/`PUT /api/workouts` still rebuild child ids. Phase 3 only changed the columns those writes persist. |
+| ✅ **Granular Set APIs and replacing the destructive PUT** (§4.7, old §5.5) | **done in Phase 5** | Nested PUT now reconciles in place. |
 | **Frontend tracking UI** — duration/distance fields, optional weight, RPE/RIR, `set_type`, dropping the `weight` alias | **Phase 6** | Phase 3 was backend-scoped. The `weight` alias is a compatibility shim, not adaptation. |
 | ✅ **Templates** | **done in Phase 4** | Separate Template domain + Session snapshot. |
 | **`PRAGMA foreign_keys=ON` at runtime** | still undecided (§5.12) | Left alone again. Not required for the `sets` rebuild. |
@@ -1259,11 +1374,21 @@ These are **not** oversights.
 
 | Deferred behavior | Where it belongs | Why it was left |
 |---|---|---|
-| **Granular Session/Set APIs and replacing the destructive PUT** (§4.7, §5.5) | **Phase 5** | Nested PUT still rebuilds child ids. Phase 4 only preserves `planned_*` across that rebuild. |
-| **`started_at` / `ended_at` Session lifecycle** (§4.6) | **Phase 5** | Start still uses `Workout.name` + `date` + `created_at`. |
+| ✅ **Granular Session/Set APIs and non-destructive PUT** (§4.7, old §5.5) | **done in Phase 5** | Stable child ids; granular WE/Set routes. |
+| ✅ **`started_at` / `ended_at` Session lifecycle** (§4.6) | **done in Phase 5** | Historical sentinels; Start is active. |
 | **Frontend template UI** — list/start/personalize/save-as-template, planned_* prefills, last-weight prefills | **Phase 6** | Phase 4 was backend-scoped. No `frontend/src/api/templates.js`. |
 | **Global template catalog / seeder** | later | Schema supports globals; zero rows after migration is valid. |
 | **`PRAGMA foreign_keys=ON` at runtime** | still undecided (§5.12) | Left alone again. Service-layer cleanup covers archive and Template delete. |
+
+## 5.5 Deliberately deferred by Phase 5
+
+These are **not** oversights.
+
+| Deferred behavior | Where it belongs | Why it was left |
+|---|---|---|
+| **Frontend adaptation** — granular live editor, `started_at`/`ended_at` UI, drop `weight` alias, Template Start/save, tracking fields | **Phase 6** | Phase 5 only plumbed child ids through the existing editor. |
+| **User timezone column / client-supplied `started_at`** | later | New Sessions use server UTC clocks and client/local `date`. No TZ field. |
+| **`PRAGMA foreign_keys=ON` at runtime** | still undecided (§5.12) | Left alone again. Not required for the `workouts` rebuild. |
 
 ---
 
@@ -1285,6 +1410,8 @@ These are **not** oversights.
   and otherwise drops the Phase 2 columns and tables. `88e993067758`'s `downgrade()` refuses if any
   Set would lose Phase 3 data, and otherwise restores the old `reps`+`weight` table.
   `68505223da63`'s `downgrade()` refuses if any template, provenance, or planned snapshot exists.
+  `0153e917bf85`'s `downgrade()` refuses if any Session is active or any `started_at` is not
+  the date-midnight sentinel.
 - **Preserve all existing rows AND their primary key values.** Existing IDs are referenced by
   foreign keys and are user-visible in URLs (`/workouts/:id`).
 - **Create a backup file before any destructive SQLite migration.** SQLite has limited `ALTER TABLE`
@@ -1292,7 +1419,7 @@ These are **not** oversights.
   *create new table → copy data → drop old → rename* pattern; Alembic's `batch_alter_table` does
   this. Always copy `gym.db` to a timestamped file first, and verify row counts afterwards.
 
-## Recorded row counts (current — measured 2026-09-06, after Phase 4)
+## Recorded row counts (current — measured 2026-09-06, after Phase 5)
 
 | Table | Rows | `max(id)` |
 |---|---|---|
@@ -1306,11 +1433,13 @@ These are **not** oversights.
 | `templates` | **0** | — |
 | `template_exercises` | **0** | — |
 
-The first seven are unchanged from after Phase 3. Phase 4 changed **no existing domain primary
+The first seven are unchanged from after Phase 3. Phase 5 changed **no existing domain primary
 keys** and no historical row counts. Every `workouts.source_template_id` is NULL. Every
-`workout_exercises.planned_*` is NULL. No historical plan or provenance was inferred.
+`workout_exercises.planned_*` is NULL. Every historical `started_at` / `ended_at` is UTC
+midnight of that row's `date` (workout 9 = 2026-07-02T00:00:00Z). No historical plan or
+provenance was inferred.
 
-`alembic_version` holds **`68505223da63`**.
+`alembic_version` holds **`0153e917bf85`**.
 
 Extra facts useful as invariants: workouts per user = `{user 7: 1, user 8: 5, user 9: 2}`;
 `sets` with `weight_kg = 0`: **0**; `sets` with non-null duration/distance/RPE/RIR: **0**;
@@ -1332,7 +1461,8 @@ change data.**
 | `backend/gym.db.backup-20260901-085211` (81,920 bytes) | at the start of the Phase 2 session |
 | `backend/gym.db.backup-20260901-091115` (81,920 bytes) | immediately before applying `da9c526717c0` — **Phase 2 rollback point** |
 | `backend/gym.db.backup-20260906-225407` (151,552 bytes) | immediately before applying `88e993067758` — **Phase 3 rollback point** |
-| `backend/gym.db.backup-20260906-230914` (155,648 bytes) | immediately before applying `68505223da63` — **this is the Phase 4 rollback point** |
+| `backend/gym.db.backup-20260906-230914` (155,648 bytes) | immediately before applying `68505223da63` — **Phase 4 rollback point** |
+| `backend/gym.db.backup-20260906-232829` (208,896 bytes) | immediately before applying `0153e917bf85` — **this is the Phase 5 rollback point** |
 
 They are git-ignored via the `*.db.backup-*` rule added to `backend/.gitignore` — the pre-existing
 `*.db` rule did **not** match it, so without that rule real user data would have been committed.
@@ -1393,12 +1523,27 @@ detail in **§2.12**, resulting schema in **§3**. Do not redo this work.
 Deliberately **not** done in Phase 4, still open: everything in **§5.4**, plus
 `PRAGMA foreign_keys=ON` (§5.12) and a test suite (§5.9).
 
-## The next task is: PHASE 5 — Granular Session/Set APIs.
+## ✅ PHASE 5 — Granular Session/Set APIs: **COMPLETED**
 
-Scope is defined by the **locked decisions in §4.6 and §4.7** — implement them as written; do not
-redesign them. Do not start Phase 6 (frontend) or Phase 7 (AI/voice) in the same change.
+Delivered: revision **`0153e917bf85`** on top of `68505223da63`. Timezone-aware
+`started_at` / nullable `ended_at` on `Workout` (no table rename, no status enum),
+historical date-midnight UTC backfill, non-destructive PUT reconcile, granular
+WorkoutExercise and Set APIs, scalar PATCH, complete, compact `order_index`.
+Existing 8 Sessions kept their ids; child ids unchanged. Narrow non-visual
+frontend ID plumbing only. Full detail in **§2.13**, resulting schema in **§3**.
+Do not redo this work.
 
-- **STOP after Phase 5.** Do not begin Phase 6 in the same change. Report results and wait.
+Deliberately **not** done in Phase 5, still open: everything in **§5.5**, plus
+`PRAGMA foreign_keys=ON` (§5.12) and a test suite (§5.9).
+
+## The next task is: PHASE 6 — Frontend adaptation.
+
+Adapt the UI to the Phase 2–5 domain: tracking fields, personal exercises,
+Templates (list/start/personalize/save-as-template), granular Session/Set
+writes, `started_at`/`ended_at`, and drop the `weight` alias. Do not start
+Phase 7 (AI/voice) in the same change.
+
+- **STOP after Phase 6.** Do not begin Phase 7 in the same change. Report results and wait.
 
 ---
 
@@ -1413,8 +1558,8 @@ redesign them. Do not start Phase 6 (frontend) or Phase 7 (AI/voice) in the same
 | **Phase 2** | Exercise Domain — global vs. personal, slugs, synonyms/aliases, tracking metadata, archiving (per §4.5) — revision `da9c526717c0` (§2.10) | ✅ **COMPLETED** |
 | **Phase 3** | Set / tracking domain (Set-side tracking validation, nullable `weight_kg` as DECIMAL(6,2), duration, distance, RPE, RIR, `set_type` — per §4.3/§4.4) — revision `88e993067758` (§2.11) | ✅ **COMPLETED** |
 | **Phase 4** | Templates (separate entity, global immutable + personal, start-template-creates-Session, save-Session-as-My-Template derivation — per §4.1/§4.2) — revision `68505223da63` (§2.12) | ✅ **COMPLETED** |
-| **Phase 5** | Granular Session/Set APIs (stable IDs, `POST /workout-exercises/{id}/sets`, `PATCH`/`DELETE /sets/{id}`, `order_index` normalization, `started_at`/`ended_at` — per §4.6/§4.7) | ← **NEXT** (§7) |
-| **Phase 6** | Frontend adaptation to the new domain and APIs | not started |
+| **Phase 5** | Granular Session/Set APIs (stable IDs, `POST /workout-exercises/{id}/sets`, `PATCH`/`DELETE /sets/{id}`, `order_index` normalization, `started_at`/`ended_at` — per §4.6/§4.7) — revision `0153e917bf85` (§2.13) | ✅ **COMPLETED** |
+| **Phase 6** | Frontend adaptation to the new domain and APIs | ← **NEXT** (§7) |
 | **Phase 7** | AI / voice layer (later) | not started |
 
 Each phase should be a self-contained, reviewable change with its own migration(s). Do not run ahead.
@@ -1437,13 +1582,13 @@ Explicitly out of scope until the corresponding phase is reached:
   (§6, §5.13).
 - **No `PRAGMA foreign_keys=ON` as a drive-by change.** It is a runtime behavior change (§5.12);
   it needs an explicit decision, not a "while we're here" fix.
-- **No granular Set APIs during Phase 4.** Templates are the current phase (§4.1/§4.2). The
-  granular `POST /workout-exercises/{id}/sets` / `PATCH`/`DELETE /sets/{id}` surface is Phase 5
-  (§4.7). Do not replace the destructive workout PUT yet (§5.5).
-- **No broad frontend Exercise / Set UI.** No tracking UI, no personal-exercise or archive/restore
-  screens, no `ExercisePicker` redesign, no RPE/RIR fields — that is Phase 6 (§5.2, §5.3). The
-  `weight` alias is a compatibility shim and is not a precedent for further frontend work.
-- **No broad refactor unrelated to the active phase.** In particular, during Phase 4 do **not**:
+- **No frontend adaptation during Phase 5 leftovers.** Granular Session/Set APIs and Session
+  clocks are done (§2.13). Wiring the editor, Template UI, and tracking fields is Phase 6.
+- **No broad frontend Exercise / Set UI until Phase 6 is the active phase.** No tracking UI, no
+  personal-exercise or archive/restore screens, no `ExercisePicker` redesign, no RPE/RIR fields
+  — that is Phase 6 (§5.2, §5.3, §5.5). The `weight` alias is a compatibility shim and is not
+  a precedent for further frontend work.
+- **No broad refactor unrelated to the active phase.** In particular, do **not**:
   migrate models to SQLAlchemy 2.0 `Mapped[]` style, introduce TypeScript, restructure folders,
   delete the dead frontend code from §5.11, rewrite the stale docs, or reformat files. Note them,
   leave them.
@@ -1480,7 +1625,8 @@ gym-tracker-app/
 │   │       ├── f3f47238398b_baseline_existing_schema.py   # baseline; downgrade() DROPS ALL ⚠️
 │   │       ├── da9c526717c0_exercise_domain_foundation.py # Phase 2
 │   │       ├── 88e993067758_set_tracking_domain.py        # Phase 3
-│   │       └── 68505223da63_template_domain.py            # Phase 4; head
+│   │       ├── 68505223da63_template_domain.py            # Phase 4
+│   │       └── 0153e917bf85_session_lifecycle.py          # Phase 5; head
 │   ├── start.bat                # Windows launcher (kills orphan :8000, alembic upgrade head, venv)
 │   ├── Dockerfile / docker-compose.yml   # CMD runs `alembic upgrade head` before uvicorn
 │   ├── scripts/seed_db.py       # `python -m scripts.seed_db` (requires a migrated schema)
@@ -1488,6 +1634,7 @@ gym-tracker-app/
 │       ├── main.py              # app factory; router mounting under /api (NO create_all)
 │       ├── core/
 │       │   ├── config.py        # pydantic-settings; DATABASE_URL, JWT_*, CORS_ORIGINS
+│       │   ├── utc.py           # UtcDateTime + utc_now / date_midnight_utc / serialize_utc
 │       │   ├── database.py      # engine, SessionLocal, Base, get_db
 │       │   ├── dependencies.py  # get_current_user
 │       │   ├── exceptions.py    # NotFoundError/ValidationError + global handlers
@@ -1531,7 +1678,8 @@ gym-tracker-app/
 | Exercise domain (done — Phase 2) | `backend/app/exercises/*` (incl. `normalization.py`), `backend/app/seed/*`, §2.10, §4.5 |
 | Phase 3 — Set / tracking (done) | `backend/app/workouts/{models,schemas,service}.py`, §2.11, §4.3/§4.4 |
 | Phase 4 — Templates (done) | `backend/app/templates/*`, §2.12, §4.1 / §4.2 (do **not** follow the obsolete template TODOs) |
-| Phase 5 — Granular Session/Set APIs (**next**) | `backend/app/workouts/service.py` (see `update_workout`), `backend/app/workouts/routes.py`, §4.6 / §4.7 |
+| Phase 5 — Granular Session/Set APIs (done) | `backend/app/workouts/{service,routes,models,schemas}.py`, §2.13, §4.6 / §4.7 |
+| Phase 6 — Frontend adaptation (**next**) | `frontend/src/api/workouts.js`, `frontend/src/components/workouts/*`, §5.5 |
 | Response/error conventions | `backend/app/core/response.py`, `backend/app/core/exceptions.py` |
 | Frontend API layer | `frontend/src/api/axiosClient.js` |
 | Frontend validation | `frontend/src/lib/validators.js` |
@@ -1574,9 +1722,9 @@ gym-tracker-app/
 .\.venv\Scripts\python.exe -m alembic -x db_url=sqlite:///C:/temp/scratch.db upgrade head
 ```
 
-- Current state: `alembic current` and `alembic heads` both report **`68505223da63 (head)`**, and
+- Current state: `alembic current` and `alembic heads` both report **`0153e917bf85 (head)`**, and
   `alembic check` is clean. The graph is linear:
-  `f3f47238398b → da9c526717c0 → 88e993067758 → 68505223da63`.
+  `f3f47238398b → da9c526717c0 → 88e993067758 → 68505223da63 → 0153e917bf85`.
 - Alembic reads `DATABASE_URL` through `app/core/config.py` — the same source the app uses.
   `sqlalchemy.url` in `alembic.ini` is blank **on purpose**; do not fill it in.
 - ⚠️ **Never run `alembic downgrade` against `gym.db`** — the baseline's `downgrade()` drops every
@@ -1602,7 +1750,7 @@ Copy-Item gym.db "gym.db.backup-$(Get-Date -Format yyyyMMdd-HHmmss)"
 ```
 
 These snapshots are git-ignored via `*.db.backup-*` in `backend/.gitignore`. Existing snapshots are
-listed in §6; the Phase 4 rollback point is `gym.db.backup-20260906-230914`.
+listed in §6; the Phase 5 rollback point is `gym.db.backup-20260906-232829`.
 
 ### Inspect the database
 
@@ -1679,7 +1827,7 @@ stale the moment anything is committed. Describe state semantically — by phase
 id, by what was verified — so this document only changes when the *project state* changes, not when
 the repository does.
 
-**Last verified:** 2026-09-06, after Phase 4 (Templates) completed. Locked decisions in §4 were
-**not** touched by that update and remain exactly as originally agreed — §4.1 / §4.2 are now
-*implemented* (§2.12) rather than merely decided, apart from Session lifecycle / granular Set
-APIs (Phase 5) and frontend adaptation (Phase 6).
+**Last verified:** 2026-09-06, after Phase 5 (Granular Session/Set APIs) completed. Locked
+decisions in §4 were **not** touched by that update and remain exactly as originally agreed —
+§4.6 / §4.7 are now *implemented* (§2.13) rather than merely decided, apart from frontend
+adaptation (Phase 6).
