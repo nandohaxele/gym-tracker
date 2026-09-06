@@ -30,6 +30,16 @@ from sqlalchemy.orm import relationship
 from app.core.database import Base
 
 
+def _planned_pair_sql(min_col: str, max_col: str) -> str:
+    """Both-null or both present, positive, and min <= max."""
+    return (
+        f"({min_col} IS NULL AND {max_col} IS NULL) OR ("
+        f"{min_col} IS NOT NULL AND {max_col} IS NOT NULL "
+        f"AND {min_col} > 0 AND {max_col} > 0 "
+        f"AND {min_col} <= {max_col})"
+    )
+
+
 class SetType(str, Enum):
     """How a recorded set was intended, independent of the tracking metrics."""
 
@@ -56,8 +66,15 @@ class Workout(Base):
     name = Column(String(120), nullable=False)
     date = Column(Date, nullable=False, default=lambda: datetime.utcnow().date())
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    source_template_id = Column(
+        Integer,
+        ForeignKey("templates.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     user = relationship("User", back_populates="workouts")
+    source_template = relationship("Template")
     exercises = relationship(
         "WorkoutExercise",
         back_populates="workout",
@@ -70,9 +87,37 @@ class Workout(Base):
 
 
 class WorkoutExercise(Base):
-    """Join row attaching a catalog Exercise to a Workout, with ordering."""
+    """Join row attaching a catalog Exercise to a Workout, with ordering.
+
+    `planned_*` is a frozen Session snapshot of Template targets at Start.
+    It is not live-linked to TemplateExercise and is independent of later
+    Template edits or deletion. Ad-hoc Sessions leave these columns NULL.
+    """
 
     __tablename__ = "workout_exercises"
+
+    __table_args__ = (
+        CheckConstraint(
+            "planned_sets IS NULL OR planned_sets > 0",
+            name="ck_workout_exercises_planned_sets_positive",
+        ),
+        CheckConstraint(
+            _planned_pair_sql("planned_reps_min", "planned_reps_max"),
+            name="ck_workout_exercises_planned_reps_pair",
+        ),
+        CheckConstraint(
+            _planned_pair_sql(
+                "planned_duration_seconds_min", "planned_duration_seconds_max"
+            ),
+            name="ck_workout_exercises_planned_duration_pair",
+        ),
+        CheckConstraint(
+            _planned_pair_sql(
+                "planned_distance_meters_min", "planned_distance_meters_max"
+            ),
+            name="ck_workout_exercises_planned_distance_pair",
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     workout_id = Column(
@@ -88,6 +133,13 @@ class WorkoutExercise(Base):
         index=True,
     )
     order_index = Column(Integer, nullable=False, default=0)
+    planned_sets = Column(Integer, nullable=True)
+    planned_reps_min = Column(Integer, nullable=True)
+    planned_reps_max = Column(Integer, nullable=True)
+    planned_duration_seconds_min = Column(Integer, nullable=True)
+    planned_duration_seconds_max = Column(Integer, nullable=True)
+    planned_distance_meters_min = Column(Integer, nullable=True)
+    planned_distance_meters_max = Column(Integer, nullable=True)
 
     workout = relationship("Workout", back_populates="exercises")
     exercise = relationship("Exercise")

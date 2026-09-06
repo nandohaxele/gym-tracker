@@ -37,6 +37,7 @@ def create_app() -> FastAPI:
     # resolve their string-based relationships.
     from app.auth import models as _auth_models  # noqa: F401
     from app.exercises import models as _exercises_models  # noqa: F401
+    from app.templates import models as _templates_models  # noqa: F401
     from app.workouts import models as _workouts_models  # noqa: F401
 
     # Schema creation is owned by Alembic, not by the app. Run
@@ -44,10 +45,12 @@ def create_app() -> FastAPI:
 
     from app.auth.routes import router as auth_router
     from app.exercises.routes import router as exercises_router
+    from app.templates.routes import router as templates_router
     from app.workouts.routes import router as workouts_router
 
     app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
     app.include_router(exercises_router, prefix="/api/exercises", tags=["exercises"])
+    app.include_router(templates_router, prefix="/api", tags=["templates"])
     app.include_router(workouts_router, prefix="/api", tags=["workouts"])
 
     register_exception_handlers(app)

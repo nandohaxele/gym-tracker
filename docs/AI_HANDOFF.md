@@ -9,11 +9,13 @@
 >
 > **Project state:** **Phase 1 — Alembic Foundation: COMPLETED** (§2.9) ·
 > **Phase 2 — Exercise Domain: COMPLETED** (§2.10) ·
-> **Phase 3 — Set & Tracking: COMPLETED** (§2.11).
-> Alembic owns schema evolution: baseline **`f3f47238398b`**, head **`88e993067758`**.
-> Sets now store nullable tracking metrics (`reps` / `duration_seconds` / `distance_meters`),
-> nullable `weight_kg` DECIMAL(6,2), RPE/RIR, and `set_type`. Existing data preserved
-> (9 / 23 / 8 / 17 / 58), including every Set id. **Next task: Phase 4 — Templates** (§7).
+> **Phase 3 — Set & Tracking: COMPLETED** (§2.11) ·
+> **Phase 4 — Templates: COMPLETED** (§2.12).
+> Alembic owns schema evolution: baseline **`f3f47238398b`**, head **`68505223da63`**.
+> Templates are a separate entity from Workout Sessions. Start copies
+> `TemplateExercise.target_*` onto `WorkoutExercise.planned_*` and creates
+> zero Set rows. Existing data preserved (9 / 23 / 8 / 17 / 58), templates 0 / 0.
+> **Next task: Phase 5 — Granular Session/Set APIs** (§7).
 >
 > This document deliberately records **no commit hash**. Git is the source of truth for revision
 > history — run `git log`/`git status` if you need it. Describe state semantically here so this file
@@ -50,7 +52,7 @@ first-class concern.
 | Validation | Pydantic 2.9.2 + `pydantic-settings` 2.5.2 |
 | Auth | JWT bearer HS256 via `python-jose`; password hashing via `passlib[bcrypt]` with **`bcrypt` pinned to 4.0.1** (passlib 1.7.4 breaks on bcrypt ≥ 4.1 — do not bump it casually; the reason is documented in `requirements.txt`) |
 | Server | uvicorn 0.30.6 |
-| Migrations | **Alembic 1.13.3** — baseline `f3f47238398b`, head `88e993067758`; `create_all()` removed from startup (see §2.9–§2.11) |
+| Migrations | **Alembic 1.13.3** — baseline `f3f47238398b`, head `68505223da63`; `create_all()` removed from startup (see §2.9–§2.12) |
 | Tests | **NONE** (no test files, no pytest/httpx in `requirements.txt`) |
 
 ## Current frontend stack
@@ -83,14 +85,15 @@ backend/
   alembic.ini          # Alembic config; sqlalchemy.url intentionally blank
   alembic/             # migration environment
     env.py             # reads DATABASE_URL from app settings; target_metadata = Base.metadata
-    versions/          # f3f47238398b -> da9c526717c0 -> 88e993067758 (set tracking)
+    versions/          # f3f47238398b -> da9c526717c0 -> 88e993067758 -> 68505223da63
   scripts/seed_db.py   # CLI seeding entrypoint (NOT under app/)
   app/
     main.py            # app factory: CORS, model imports, router mounting (no create_all)
     core/              # config, database, dependencies, exceptions, response envelope, security
     auth/              # User model, register/login/me
     exercises/         # Exercise + ExerciseTracking + ExerciseSynonym, normalization, read+write API
-    workouts/          # Workout + WorkoutExercise + Set
+    workouts/          # Workout + WorkoutExercise + Set (Session)
+    templates/         # Template + TemplateExercise (intent only)
     seed/              # global exercise catalog + idempotent slug-keyed seeder
 ```
 
@@ -168,10 +171,12 @@ media/images, restore endpoint, exercise search/filter endpoints, an HTTP resolv
 handling beyond storing `locale` (everything is seeded as `en` and resolution ignores it), and any
 exercise UI beyond the compatibility guard in §2.10.
 
-## 2.3 Workouts / Sessions — IMPLEMENTED AS A SINGLE "WORKOUT" ENTITY
+## 2.3 Workouts / Sessions — IMPLEMENTED AS THE PERFORMED SESSION
 
-There is **no Template/Session split today**. There is one entity, `Workout`, which represents a
-dated, performed workout owned by a user.
+`Workout` remains the performed Session. Templates are a **separate** entity (§2.12).
+A Session started from a Template is still a `Workout`; it carries optional provenance
+(`source_template_id`) and a frozen plan on each `WorkoutExercise.planned_*`. Ad-hoc
+Sessions (the existing 8, and `POST /api/workouts`) leave those columns NULL.
 
 Endpoints (all auth-scoped to the current user):
 
@@ -182,6 +187,7 @@ Endpoints (all auth-scoped to the current user):
 | GET | `/api/workouts/{id}` | full nested detail, eager-loaded via `selectinload` |
 | PUT | `/api/workouts/{id}` | **full replace** of scalars *and* the whole nested tree |
 | DELETE | `/api/workouts/{id}` | deletes workout + cascade children, returns 200 with `data: null` |
+| POST | `/api/workouts/{id}/save-as-template` | derive a personal Template from recorded Sets (§2.12) |
 
 Implementation notes that matter:
 
@@ -197,10 +203,13 @@ Implementation notes that matter:
 - **`update_workout` reassigns `workout.exercises`**, which triggers `delete-orphan` cascade. This
   **destroys and recreates all `WorkoutExercise` and `Set` rows with new primary keys** on every PUT.
   This is confirmed by the live DB: 17 `workout_exercises` rows but `max(id) = 32`; 58 `sets` rows but
-  `max(id) = 98`. See §5.
+  `max(id) = 98`. See §5. Phase 4 does **not** replace that PUT. It preserves `planned_*` across the
+  rebuild by sequential same-`exercise_id` matching when the client omits those fields (the current
+  frontend never sends them). `source_template_id` is a Workout scalar and is not part of the PUT
+  body, so provenance survives. Ad-hoc `POST /api/workouts` leaves `planned_*` NULL.
 
-**NOT implemented:** templates, session start/end timestamps, active vs. completed state, notes,
-per-session duration, granular child-resource endpoints, pagination.
+**NOT implemented:** session start/end timestamps, active vs. completed state, notes,
+per-session duration, granular child-resource endpoints, pagination. Templates: §2.12.
 
 ## 2.4 Sets — IMPLEMENTED (Phase 3)
 
@@ -278,6 +287,14 @@ POST   /api/workouts
 GET    /api/workouts/{workout_id}
 PUT    /api/workouts/{workout_id}
 DELETE /api/workouts/{workout_id}
+POST   /api/workouts/{workout_id}/save-as-template
+GET    /api/templates
+POST   /api/templates
+GET    /api/templates/{template_id}
+PATCH  /api/templates/{template_id}
+DELETE /api/templates/{template_id}
+POST   /api/templates/{template_id}/personalize
+POST   /api/templates/{template_id}/start
 ```
 
 That is the complete list. All responses use the `{success, data, error}` envelope.
@@ -310,7 +327,7 @@ Note for whoever builds the real suite: `httpx` is **not installed**, so
 4. **`docs/project-status.md` is stale**: it declares the current phase to be "Phase 5 Step 3
    (Rest Timer, UX Polish, Empty States, Loading Skeletons)". Empty/error states are already
    implemented (`StatusView`), Phases 1 (Alembic) and 2 (Exercise domain) are now **complete**, and
-   the real next task is **Phase 4 — Templates** (§7).
+   the real next task is **Phase 5 — Granular Session/Set APIs** (§7).
    ⚠️ **Phase-numbering collision:** the old frontend-era numbering ("Phase 5 Step 3") is unrelated to
    the new domain roadmap numbering in §8. Use §8 numbering from now on.
 5. **`docs/decision-log.md` is empty (0 bytes)** despite being the designated place for decisions.
@@ -557,15 +574,93 @@ exercise; `weight_kg = 0` is stored as 0; plank without `duration_seconds` is re
 with `duration_seconds` plus optional RPE/RIR/`set_type=warmup` succeeds; RPE 7.2 is rejected
 as an invalid increment.
 
+## 2.12 Templates — IMPLEMENTED (Phase 4, COMPLETED)
+
+**Migration revision: `68505223da63`** ("template domain"),
+`down_revision = "88e993067758"`. Behavioral summary of the locked decisions is in
+**§4.1 / §4.2**; the resulting schema is in §3.
+
+### What exists
+
+Dedicated module `backend/app/templates/` (`models / schemas / service / routes`).
+**No `is_template` flag on Workout.** Template = reusable intent. Workout = performed Session.
+
+- **`Template`:** `id`, nullable `user_id` (NULL = global), `name`, `name_normalized`,
+  `created_at`. No slug, no archive, no actual performance, no weight target, no JSON metadata.
+- **`TemplateExercise`:** catalog `exercise_id`, `order_index`, `target_sets` (> 0), and
+  nullable min/max pairs for reps / duration_seconds / distance_meters. No Set rows, no
+  `target_weight`, no RPE/RIR/`set_type` targets. Pair rule: both null, or both present with
+  `min <= max` and both `> 0`.
+- **Ownership.** Globals are visible to every authenticated user and immutable (PATCH/DELETE
+  → 422). Personal templates are owner-only (cross-user → 404), fully editable, and deletable.
+  There is no normal-user API to create a global template. Zero globals after migration is
+  valid; none were seeded.
+- **Name uniqueness.** Same normalization as exercises (trim / lowercase / collapse spaces).
+  Partial unique indexes: personal names unique per user; global names unique among globals.
+  A personal name may reuse a global one. Duplicates are **409 Conflict**, never auto-suffixed.
+- **Start (`POST /api/templates/{id}/start`).** Creates a `Workout` for the caller:
+  `name` from the template, `date = date.today()`, `source_template_id` set,
+  `TemplateExercise.target_*` copied onto `WorkoutExercise.planned_*`, **zero Set rows**.
+  Starting a global does **not** create a personal template. Session snapshot is independent:
+  later Template edits/deletes never rewrite `planned_*`, order, name, or Sets. Template
+  deletion clears `source_template_id` in the service layer (PRAGMA foreign_keys is still off,
+  so `ON DELETE SET NULL` is not relied on).
+- **Personalize (`POST /api/templates/{id}/personalize`).** Global only (personal → 422).
+  Deep-copies name (overridable), exercise ids, order, and all targets into a new personal
+  template. Does not start a Session and does not mutate the source.
+- **Save Session as Template (`POST /api/workouts/{id}/save-as-template`).** Derives a
+  personal template from **recorded Sets only**, never from `planned_*`. An exercise is
+  included only when it has at least one Set with `reps` / `duration_seconds` /
+  `distance_meters` non-null. All `set_type`s count. Archived personal exercises are omitted.
+  `target_sets` = recorded count; each metric is exact MIN/MAX of non-null values (equal when
+  min == max). Weight / RPE / RIR / `set_type` are never stored. Name defaults to
+  `Workout.name`. No eligible exercises → 422. Historical plank set 38 (workout 5) derives
+  `target_reps 200–200` and NULL duration — old reps are not reinterpreted as duration.
+- **Archive integration.** `archive_personal_exercise` now deletes `TemplateExercise` rows
+  that reference that exercise on the **owner's personal templates only**. Sessions, Sets,
+  and global templates are untouched. Empty personal templates after cleanup are allowed.
+- **`has_recorded_sets`** still joins `Set ← WorkoutExercise` only. Template mentions do
+  not freeze tracking.
+
+### Files
+
+Created: `backend/app/templates/{__init__,models,schemas,service,routes}.py`,
+`backend/alembic/versions/68505223da63_template_domain.py`.
+
+Modified: `app/workouts/{models,schemas,service,routes}.py`,
+`app/exercises/service.py` (archive cleanup), `app/auth/models.py` (`User.templates`),
+`app/main.py`, `alembic/env.py`, `scripts/seed_db.py`. **No frontend files.**
+
+### Verification performed
+
+Data safety on the real `gym.db`, rehearsed first on a full copy (including a
+downgrade/re-upgrade round trip that is reversible while templates/snapshots are empty):
+row counts still 9 / 23 / 8 / 17 / 58 plus `templates = 0` / `template_exercises = 0`;
+identical workout / workout_exercise / set id sets; every historical `source_template_id`
+and `planned_*` NULL; set 38 untouched; `pragma foreign_key_check` and `integrity_check`
+clean; `alembic current` = `heads` = `68505223da63`; `alembic check` clean.
+
+Behavioral checks on a scratch copy (47 assertions): empty and populated personal
+templates; selectable-exercise rules; normalized duplicate rejected; cross-user name reuse;
+personal name may match a global; global immutable; personalize deep-copy / no source
+mutation / personal rejected; Start global and personal with provenance, planned snapshot,
+and zero Sets, without creating a personal copy; Template edit after Start leaves the
+Session snapshot intact; Template delete nulls provenance and keeps `planned_*`; Session
+PUT never writes back to the Template and preserves `planned_*` when those fields are
+omitted; archive strips the owner's personal templates only; save-as-template derivation
+(including plank 200–200 / no duration / no weight); no `/sets` routes; no `started_at` /
+`ended_at`. Live `gym.db` received **no** test templates.
+
 ---
 
 # 3. CURRENT DATABASE SCHEMA
 
 This is the **exact live schema** of `backend/gym.db`, dumped from `sqlite_master` on 2026-09-06,
-i.e. at revision `88e993067758`. `users`, `workouts` and `workout_exercises` are still what
-`create_all()` produced and the baseline reproduces; **`exercises` was widened and two tables
-were added by Phase 2** (§2.10); **`sets` was rebuilt by Phase 3** (§2.11). `alembic_version`
-is listed at the end.
+i.e. at revision `68505223da63`. `users` is still what `create_all()` produced and the baseline
+reproduces; **`exercises` was widened and two tables were added by Phase 2** (§2.10);
+**`sets` was rebuilt by Phase 3** (§2.11); **Phase 4 added `templates` / `template_exercises`,
+`workouts.source_template_id`, and `workout_exercises.planned_*`**. `alembic_version` is listed
+at the end.
 
 Formatting note: SQLite quotes the table name (`CREATE TABLE "exercises"`) after a
 `batch_alter_table` rebuild. That is cosmetic.
@@ -644,24 +739,120 @@ CREATE INDEX ix_exercise_synonyms_id ON exercise_synonyms (id);
 CREATE INDEX ix_exercise_synonyms_synonym_normalized
     ON exercise_synonyms (synonym_normalized);
 
-CREATE TABLE workouts (
-    id         INTEGER NOT NULL,
-    user_id    INTEGER NOT NULL,
-    name       VARCHAR(120) NOT NULL,
-    date       DATE NOT NULL,
-    created_at DATETIME NOT NULL,
+CREATE TABLE "workouts" (
+    id                 INTEGER NOT NULL,
+    user_id            INTEGER NOT NULL,
+    name               VARCHAR(120) NOT NULL,
+    date               DATE NOT NULL,
+    created_at         DATETIME NOT NULL,
+    source_template_id INTEGER,              -- provenance only; NULL for ad-hoc
     PRIMARY KEY (id),
-    FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+    FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+    CONSTRAINT fk_workouts_source_template_id_templates
+        FOREIGN KEY (source_template_id) REFERENCES templates (id) ON DELETE SET NULL
 );
 CREATE INDEX ix_workouts_user_id ON workouts (user_id);
 CREATE INDEX ix_workouts_id ON workouts (id);
+CREATE INDEX ix_workouts_source_template_id ON workouts (source_template_id);
 
-CREATE TABLE workout_exercises (
-    id          INTEGER NOT NULL,
-    workout_id  INTEGER NOT NULL,
-    exercise_id INTEGER NOT NULL,
-    order_index INTEGER NOT NULL,
+CREATE TABLE templates (
+    id              INTEGER NOT NULL,
+    user_id         INTEGER,                  -- NULL = global, else the owner
+    name            VARCHAR(120) NOT NULL,
+    name_normalized VARCHAR(120) NOT NULL,
+    created_at      DATETIME NOT NULL,
     PRIMARY KEY (id),
+    CONSTRAINT fk_templates_user_id_users
+        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+);
+CREATE INDEX ix_templates_id ON templates (id);
+CREATE INDEX ix_templates_user_id ON templates (user_id);
+CREATE INDEX ix_templates_name_normalized ON templates (name_normalized);
+CREATE UNIQUE INDEX uq_templates_global_name_normalized
+    ON templates (name_normalized) WHERE user_id IS NULL;
+CREATE UNIQUE INDEX uq_templates_personal_name_normalized
+    ON templates (user_id, name_normalized) WHERE user_id IS NOT NULL;
+
+CREATE TABLE template_exercises (
+    id                           INTEGER NOT NULL,
+    template_id                  INTEGER NOT NULL,
+    exercise_id                  INTEGER NOT NULL,
+    order_index                  INTEGER NOT NULL,
+    target_sets                  INTEGER NOT NULL,
+    target_reps_min              INTEGER,
+    target_reps_max              INTEGER,
+    target_duration_seconds_min  INTEGER,
+    target_duration_seconds_max  INTEGER,
+    target_distance_meters_min   INTEGER,
+    target_distance_meters_max   INTEGER,
+    PRIMARY KEY (id),
+    CONSTRAINT ck_template_exercises_target_sets_positive CHECK (target_sets > 0),
+    CONSTRAINT ck_template_exercises_reps_pair CHECK (
+        (target_reps_min IS NULL AND target_reps_max IS NULL) OR (
+            target_reps_min IS NOT NULL AND target_reps_max IS NOT NULL
+            AND target_reps_min > 0 AND target_reps_max > 0
+            AND target_reps_min <= target_reps_max
+        )
+    ),
+    CONSTRAINT ck_template_exercises_duration_pair CHECK (
+        (target_duration_seconds_min IS NULL AND target_duration_seconds_max IS NULL) OR (
+            target_duration_seconds_min IS NOT NULL AND target_duration_seconds_max IS NOT NULL
+            AND target_duration_seconds_min > 0 AND target_duration_seconds_max > 0
+            AND target_duration_seconds_min <= target_duration_seconds_max
+        )
+    ),
+    CONSTRAINT ck_template_exercises_distance_pair CHECK (
+        (target_distance_meters_min IS NULL AND target_distance_meters_max IS NULL) OR (
+            target_distance_meters_min IS NOT NULL AND target_distance_meters_max IS NOT NULL
+            AND target_distance_meters_min > 0 AND target_distance_meters_max > 0
+            AND target_distance_meters_min <= target_distance_meters_max
+        )
+    ),
+    CONSTRAINT fk_template_exercises_template_id_templates
+        FOREIGN KEY (template_id) REFERENCES templates (id) ON DELETE CASCADE,
+    CONSTRAINT fk_template_exercises_exercise_id_exercises
+        FOREIGN KEY (exercise_id) REFERENCES exercises (id) ON DELETE RESTRICT
+);
+CREATE INDEX ix_template_exercises_id ON template_exercises (id);
+CREATE INDEX ix_template_exercises_template_id ON template_exercises (template_id);
+CREATE INDEX ix_template_exercises_exercise_id ON template_exercises (exercise_id);
+
+CREATE TABLE "workout_exercises" (
+    id                              INTEGER NOT NULL,
+    workout_id                      INTEGER NOT NULL,
+    exercise_id                     INTEGER NOT NULL,
+    order_index                     INTEGER NOT NULL,
+    planned_sets                    INTEGER,   -- frozen Start snapshot; NULL if ad-hoc
+    planned_reps_min                INTEGER,
+    planned_reps_max                INTEGER,
+    planned_duration_seconds_min    INTEGER,
+    planned_duration_seconds_max    INTEGER,
+    planned_distance_meters_min     INTEGER,
+    planned_distance_meters_max     INTEGER,
+    PRIMARY KEY (id),
+    CONSTRAINT ck_workout_exercises_planned_sets_positive
+        CHECK (planned_sets IS NULL OR planned_sets > 0),
+    CONSTRAINT ck_workout_exercises_planned_reps_pair CHECK (
+        (planned_reps_min IS NULL AND planned_reps_max IS NULL) OR (
+            planned_reps_min IS NOT NULL AND planned_reps_max IS NOT NULL
+            AND planned_reps_min > 0 AND planned_reps_max > 0
+            AND planned_reps_min <= planned_reps_max
+        )
+    ),
+    CONSTRAINT ck_workout_exercises_planned_duration_pair CHECK (
+        (planned_duration_seconds_min IS NULL AND planned_duration_seconds_max IS NULL) OR (
+            planned_duration_seconds_min IS NOT NULL AND planned_duration_seconds_max IS NOT NULL
+            AND planned_duration_seconds_min > 0 AND planned_duration_seconds_max > 0
+            AND planned_duration_seconds_min <= planned_duration_seconds_max
+        )
+    ),
+    CONSTRAINT ck_workout_exercises_planned_distance_pair CHECK (
+        (planned_distance_meters_min IS NULL AND planned_distance_meters_max IS NULL) OR (
+            planned_distance_meters_min IS NOT NULL AND planned_distance_meters_max IS NOT NULL
+            AND planned_distance_meters_min > 0 AND planned_distance_meters_max > 0
+            AND planned_distance_meters_min <= planned_distance_meters_max
+        )
+    ),
     FOREIGN KEY (workout_id)  REFERENCES workouts (id)  ON DELETE CASCADE,
     FOREIGN KEY (exercise_id) REFERENCES exercises (id) ON DELETE RESTRICT
 );
@@ -710,9 +901,10 @@ CREATE TABLE alembic_version (
 );
 ```
 
-It currently holds exactly one row: **`88e993067758`** (it held `f3f47238398b` after Phase 1
-and `da9c526717c0` after Phase 2). This is Alembic's own bookkeeping — it is **not** part of
-the domain model, has no relationships, and must never be edited by hand.
+It currently holds exactly one row: **`68505223da63`** (it held `f3f47238398b` after Phase 1,
+`da9c526717c0` after Phase 2, and `88e993067758` after Phase 3). This is Alembic's own
+bookkeeping — it is **not** part of the domain model, has no relationships, and must never
+be edited by hand.
 
 ## Uniqueness rules, stated plainly
 
@@ -721,6 +913,9 @@ the domain model, has no relationships, and must never be edited by hand.
 | A global's normalized name is unique among globals | `uq_exercises_global_name_normalized` (partial) |
 | A global's slug is unique among globals | `uq_exercises_global_slug` (partial) |
 | A user's normalized names are unique among *their* exercises | `uq_exercises_personal_name_normalized` (partial) |
+| A global's normalized template name is unique among globals | `uq_templates_global_name_normalized` (partial) |
+| A user's normalized template names are unique among *their* templates | `uq_templates_personal_name_normalized` (partial) |
+| A global template name and a personal template name may overlap | the two template scopes being separate partial indexes |
 | A global name and a personal name may overlap | the two scopes being separate partial indexes |
 | Globals have a slug, personal exercises do not | `ck_exercises_slug_scope` |
 | No duplicate tracking type per exercise | `uq_exercise_tracking_type` |
@@ -746,7 +941,11 @@ would break any future restore.
 | From | To | Cardinality | DB-level | ORM-level |
 |---|---|---|---|---|
 | `User` | `Workout` | 1 → N | `ON DELETE CASCADE` | `cascade="all, delete-orphan"` |
+| `User` | `Template` (personal) | 1 → N | `ON DELETE CASCADE` | `cascade="all, delete-orphan"` |
 | `User` | `Exercise` (personal) | 1 → N | `ON DELETE CASCADE` | **no ORM relationship** — see note below |
+| `Template` | `TemplateExercise` | 1 → N | `ON DELETE CASCADE` | `cascade="all, delete-orphan"`, `order_by=order_index` |
+| `TemplateExercise` | `Exercise` | N → 1 | `ON DELETE RESTRICT` | plain `relationship`, catalog rows are never deleted |
+| `Workout` | `Template` (provenance) | N → 0..1 | `ON DELETE SET NULL` | plain `relationship`; service also clears the FK because PRAGMA is off |
 | `Workout` | `WorkoutExercise` | 1 → N | `ON DELETE CASCADE` | `cascade="all, delete-orphan"`, `order_by=order_index` |
 | `WorkoutExercise` | `Exercise` | N → 1 | `ON DELETE RESTRICT` | plain `relationship`, catalog rows are never deleted |
 | `WorkoutExercise` | `Set` | 1 → N | `ON DELETE CASCADE` | `cascade="all, delete-orphan"`, `order_by=order_index` |
@@ -921,6 +1120,9 @@ All storage uses canonical units. Any unit conversion is a presentation concern.
 > ✅ **Resolved by Phase 3** and removed from this list: *"Set requires NOT NULL reps+weight"* and
 > *"`weight` is FLOAT"*. Numbers of the remaining items are **not** renumbered, so cross-references
 > such as §5.5 / §5.12 stay stable. Phase 3 added items 20–21.
+>
+> ✅ **Resolved by Phase 4** and removed from this list: *"The `Template` entity does not exist at
+> all"* (old item 7) and the deferred archive→template cleanup. Phase 4 added item 22.
 
 1. **SQLite holds existing real data** (`backend/gym.db`, 9 users / 8 workouts / 58 sets). Migrations
    must be non-destructive. See §6.
@@ -938,7 +1140,7 @@ All storage uses canonical units. Any unit conversion is a presentation concern.
    the UTC path is reachable by any client that omits `date`. The frontend currently always sends an
    explicitly computed **local** `YYYY-MM-DD` (`utils/format.js::toDateInputValue`), which masks the
    bug. Decide one timezone policy during the domain phases.
-7. **The `Template` entity does not exist at all** — no model, no table, no schema, no endpoint.
+7. ✅ **Resolved by Phase 4.** Template is a separate domain (`templates` / `template_exercises`).
 8. ⚠️ **The existing `TODO` comments that suggest implementing "Workout-as-template" MUST NOT be
     followed.** Specifically:
     - `app/workouts/routes.py` (~line 33): suggests `POST /workouts/templates` persisting "a
@@ -997,7 +1199,13 @@ All storage uses canonical units. Any unit conversion is a presentation concern.
 21. **Historical plank set id 38 has no `duration_seconds`.** It was recorded under the old
     reps+weight schema (`reps=200`, `weight_kg=96`) and was deliberately not rewritten. Reads
     succeed; a PUT of workout 5 that resubmits that set without `duration_seconds` is a 422
-    until Phase 6 can send duration. Do not invent a duration in a later migration.
+    until Phase 6 can send duration. Do not invent a duration in a later migration. Saving
+    workout 5 as a template derives `target_reps 200–200` and NULL duration — that is correct.
+22. **Legacy PUT preserves `planned_*` by sequential same-`exercise_id` matching**, not by
+    stable child IDs. That is enough for the current frontend (it never reorders by sending
+    planned fields, and live Sessions have unique `exercise_id`s per workout). Duplicate
+    `exercise_id`s in one Session make the mapping first-come-first-served. Phase 5's stable
+    IDs will make this transitional strategy unnecessary.
 
 ## 5.1 Fixed during Phase 1 — pre-existing `seed_db` bug
 
@@ -1028,7 +1236,7 @@ These are **not** oversights. Each is a locked decision whose prerequisite does 
 | Deferred behavior | Where it belongs | Why it could not be done now |
 |---|---|---|
 | ✅ **"A Set must contain the Exercise primary metric"** (§4.3) | **done in Phase 3** | Service-layer write check against `exercise_tracking`. Historical set 38 is grandfathered on read (§5.21). |
-| **"Archiving a personal exercise removes it from future personal templates"** (§4.5) | **Phase 4 — Templates** | No `Template` entity exists — no model, no table (§5.7). `service.archive_personal_exercise` currently only flips `is_active`; its docstring names this deferral so it is found when templates land. |
+| ✅ **"Archiving a personal exercise removes it from future personal templates"** (§4.5) | **done in Phase 4** | `archive_personal_exercise` deletes the owner's personal `TemplateExercise` rows for that id. Sessions are not rewritten. |
 | **Full frontend adaptation** — tracking UI, personal-exercise UI, archived/restore views, `ExercisePicker` redesign | **Phase 6 — Frontend adaptation** | Phase 2 was backend-scoped. The single one-line null-safety guard in `ExercisePicker.jsx` (§2.10) is a compatibility fix, not adaptation. |
 | **`PRAGMA foreign_keys=ON` at runtime** | still undecided (§5.12) | A runtime behavior change, not infrastructure. Phase 2 confirmed again that it is not needed for safe migrations and left it alone. |
 | **HTTP resolver endpoint** | whenever a consumer needs it (likely Phase 6/7) | `service.resolve_exercise` is fully implemented and tested, but nothing calls it over HTTP yet, and inventing an endpoint shape without a consumer would be speculative. The AI/voice layer (Phase 7) is its obvious first user. |
@@ -1042,8 +1250,20 @@ These are **not** oversights.
 |---|---|---|
 | **Granular Set APIs and replacing the destructive PUT** (§4.7, §5.5) | **Phase 5** | Nested `POST`/`PUT /api/workouts` still rebuild child ids. Phase 3 only changed the columns those writes persist. |
 | **Frontend tracking UI** — duration/distance fields, optional weight, RPE/RIR, `set_type`, dropping the `weight` alias | **Phase 6** | Phase 3 was backend-scoped. The `weight` alias is a compatibility shim, not adaptation. |
-| **Templates** | **Phase 4** | Still no `Template` entity. |
+| ✅ **Templates** | **done in Phase 4** | Separate Template domain + Session snapshot. |
 | **`PRAGMA foreign_keys=ON` at runtime** | still undecided (§5.12) | Left alone again. Not required for the `sets` rebuild. |
+
+## 5.4 Deliberately deferred by Phase 4
+
+These are **not** oversights.
+
+| Deferred behavior | Where it belongs | Why it was left |
+|---|---|---|
+| **Granular Session/Set APIs and replacing the destructive PUT** (§4.7, §5.5) | **Phase 5** | Nested PUT still rebuilds child ids. Phase 4 only preserves `planned_*` across that rebuild. |
+| **`started_at` / `ended_at` Session lifecycle** (§4.6) | **Phase 5** | Start still uses `Workout.name` + `date` + `created_at`. |
+| **Frontend template UI** — list/start/personalize/save-as-template, planned_* prefills, last-weight prefills | **Phase 6** | Phase 4 was backend-scoped. No `frontend/src/api/templates.js`. |
+| **Global template catalog / seeder** | later | Schema supports globals; zero rows after migration is valid. |
+| **`PRAGMA foreign_keys=ON` at runtime** | still undecided (§5.12) | Left alone again. Service-layer cleanup covers archive and Template delete. |
 
 ---
 
@@ -1064,6 +1284,7 @@ These are **not** oversights.
   every table (§5.13). `da9c526717c0`'s own `downgrade()` refuses if any personal exercise exists,
   and otherwise drops the Phase 2 columns and tables. `88e993067758`'s `downgrade()` refuses if any
   Set would lose Phase 3 data, and otherwise restores the old `reps`+`weight` table.
+  `68505223da63`'s `downgrade()` refuses if any template, provenance, or planned snapshot exists.
 - **Preserve all existing rows AND their primary key values.** Existing IDs are referenced by
   foreign keys and are user-visible in URLs (`/workouts/:id`).
 - **Create a backup file before any destructive SQLite migration.** SQLite has limited `ALTER TABLE`
@@ -1071,7 +1292,7 @@ These are **not** oversights.
   *create new table → copy data → drop old → rename* pattern; Alembic's `batch_alter_table` does
   this. Always copy `gym.db` to a timestamped file first, and verify row counts afterwards.
 
-## Recorded row counts (current — measured 2026-09-06, after Phase 3)
+## Recorded row counts (current — measured 2026-09-06, after Phase 4)
 
 | Table | Rows | `max(id)` |
 |---|---|---|
@@ -1082,13 +1303,14 @@ These are **not** oversights.
 | `sets` | **58** | 98 |
 | `exercise_tracking` | **23** | 23 |
 | `exercise_synonyms` | **26** | 26 |
+| `templates` | **0** | — |
+| `template_exercises` | **0** | — |
 
-The first five are unchanged from before Phase 1. Phase 3 changed **no Set primary keys** and no
-row counts. Each historical `reps` / `order_index` / `workout_exercise_id` is identical; each
-`weight_kg` equals the old `weight`. The only intentional data change is the column rename plus
-`set_type = 'working'` on all 58 rows.
+The first seven are unchanged from after Phase 3. Phase 4 changed **no existing domain primary
+keys** and no historical row counts. Every `workouts.source_template_id` is NULL. Every
+`workout_exercises.planned_*` is NULL. No historical plan or provenance was inferred.
 
-`alembic_version` holds **`88e993067758`**.
+`alembic_version` holds **`68505223da63`**.
 
 Extra facts useful as invariants: workouts per user = `{user 7: 1, user 8: 5, user 9: 2}`;
 `sets` with `weight_kg = 0`: **0**; `sets` with non-null duration/distance/RPE/RIR: **0**;
@@ -1109,7 +1331,8 @@ change data.**
 | `backend/gym.db.backup-20260830-225004` (73,728 bytes) | immediately before Phase 1 |
 | `backend/gym.db.backup-20260901-085211` (81,920 bytes) | at the start of the Phase 2 session |
 | `backend/gym.db.backup-20260901-091115` (81,920 bytes) | immediately before applying `da9c526717c0` — **Phase 2 rollback point** |
-| `backend/gym.db.backup-20260906-225407` (151,552 bytes) | immediately before applying `88e993067758` — **this is the Phase 3 rollback point** |
+| `backend/gym.db.backup-20260906-225407` (151,552 bytes) | immediately before applying `88e993067758` — **Phase 3 rollback point** |
+| `backend/gym.db.backup-20260906-230914` (155,648 bytes) | immediately before applying `68505223da63` — **this is the Phase 4 rollback point** |
 
 They are git-ignored via the `*.db.backup-*` rule added to `backend/.gitignore` — the pre-existing
 `*.db` rule did **not** match it, so without that rule real user data would have been committed.
@@ -1157,12 +1380,25 @@ schema in **§3**. Do not redo this work.
 Deliberately **not** done in Phase 3, still open: everything in **§5.3**, plus
 `PRAGMA foreign_keys=ON` (§5.12) and a test suite (§5.9).
 
-## The next task is: PHASE 4 — Templates.
+## ✅ PHASE 4 — Templates: **COMPLETED**
 
-Scope is defined by the **locked decisions in §4.1 and §4.2** — implement them as written; do not
-redesign them. Do not start Phase 5 (granular Set APIs) or Phase 6 (frontend) in the same change.
+Delivered: revision **`68505223da63`** on top of `88e993067758`. Separate `Template` /
+`TemplateExercise` domain (global immutable + personal editable), Start copies targets onto
+`WorkoutExercise.planned_*` with **zero Set rows**, optional `Workout.source_template_id`,
+personalize deep-copy, save-Session-as-template derivation from recorded Sets, and archive
+cleanup of the owner's personal templates. Existing 8 Sessions kept their ids; planned_* and
+provenance are NULL. No frontend, no granular Set APIs, no `started_at`/`ended_at`. Full
+detail in **§2.12**, resulting schema in **§3**. Do not redo this work.
 
-- **STOP after Phase 4.** Do not begin Phase 5 in the same change. Report results and wait.
+Deliberately **not** done in Phase 4, still open: everything in **§5.4**, plus
+`PRAGMA foreign_keys=ON` (§5.12) and a test suite (§5.9).
+
+## The next task is: PHASE 5 — Granular Session/Set APIs.
+
+Scope is defined by the **locked decisions in §4.6 and §4.7** — implement them as written; do not
+redesign them. Do not start Phase 6 (frontend) or Phase 7 (AI/voice) in the same change.
+
+- **STOP after Phase 5.** Do not begin Phase 6 in the same change. Report results and wait.
 
 ---
 
@@ -1176,8 +1412,8 @@ redesign them. Do not start Phase 5 (granular Set APIs) or Phase 6 (frontend) in
 | **Phase 1** | Alembic Foundation — Alembic + baseline `f3f47238398b` of the existing DB (§2.9) | ✅ **COMPLETED** |
 | **Phase 2** | Exercise Domain — global vs. personal, slugs, synonyms/aliases, tracking metadata, archiving (per §4.5) — revision `da9c526717c0` (§2.10) | ✅ **COMPLETED** |
 | **Phase 3** | Set / tracking domain (Set-side tracking validation, nullable `weight_kg` as DECIMAL(6,2), duration, distance, RPE, RIR, `set_type` — per §4.3/§4.4) — revision `88e993067758` (§2.11) | ✅ **COMPLETED** |
-| **Phase 4** | Templates (separate entity, global immutable + personal, start-template-creates-Session, save-Session-as-My-Template derivation — per §4.1/§4.2) | ← **NEXT** (§7) |
-| **Phase 5** | Granular Session/Set APIs (stable IDs, `POST /workout-exercises/{id}/sets`, `PATCH`/`DELETE /sets/{id}`, `order_index` normalization — per §4.7) | not started |
+| **Phase 4** | Templates (separate entity, global immutable + personal, start-template-creates-Session, save-Session-as-My-Template derivation — per §4.1/§4.2) — revision `68505223da63` (§2.12) | ✅ **COMPLETED** |
+| **Phase 5** | Granular Session/Set APIs (stable IDs, `POST /workout-exercises/{id}/sets`, `PATCH`/`DELETE /sets/{id}`, `order_index` normalization, `started_at`/`ended_at` — per §4.6/§4.7) | ← **NEXT** (§7) |
 | **Phase 6** | Frontend adaptation to the new domain and APIs | not started |
 | **Phase 7** | AI / voice layer (later) | not started |
 
@@ -1243,7 +1479,8 @@ gym-tracker-app/
 │   │   └── versions/
 │   │       ├── f3f47238398b_baseline_existing_schema.py   # baseline; downgrade() DROPS ALL ⚠️
 │   │       ├── da9c526717c0_exercise_domain_foundation.py # Phase 2
-│   │       └── 88e993067758_set_tracking_domain.py        # Phase 3; head
+│   │       ├── 88e993067758_set_tracking_domain.py        # Phase 3
+│   │       └── 68505223da63_template_domain.py            # Phase 4; head
 │   ├── start.bat                # Windows launcher (kills orphan :8000, alembic upgrade head, venv)
 │   ├── Dockerfile / docker-compose.yml   # CMD runs `alembic upgrade head` before uvicorn
 │   ├── scripts/seed_db.py       # `python -m scripts.seed_db` (requires a migrated schema)
@@ -1260,6 +1497,7 @@ gym-tracker-app/
 │       ├── exercises/           # models(Exercise, ExerciseTracking, ExerciseSynonym, TrackingType),
 │       │                        #   normalization.py, schemas, service (scoping/CRUD/resolver), routes
 │       ├── workouts/            # models(Workout, WorkoutExercise, Set, SetType) schemas service routes
+│       ├── templates/           # models(Template, TemplateExercise) schemas service routes
 │       └── seed/                # exercises_seed.py (23 globals w/ slug + tracking + aliases)
 │                                #   + seeder.py (idempotent, keyed by slug)
 └── frontend/
@@ -1292,8 +1530,8 @@ gym-tracker-app/
 | Migrations (any phase) | `backend/alembic/env.py`, `backend/alembic.ini`, `backend/alembic/versions/`, `backend/app/core/database.py`, `backend/app/core/config.py` |
 | Exercise domain (done — Phase 2) | `backend/app/exercises/*` (incl. `normalization.py`), `backend/app/seed/*`, §2.10, §4.5 |
 | Phase 3 — Set / tracking (done) | `backend/app/workouts/{models,schemas,service}.py`, §2.11, §4.3/§4.4 |
-| Phase 4 — Templates (**next**) | §4.1 / §4.2, `backend/app/workouts/` (do **not** follow the obsolete template TODOs) |
-| Granular Set APIs | `backend/app/workouts/service.py` (see `update_workout`), `backend/app/workouts/routes.py` |
+| Phase 4 — Templates (done) | `backend/app/templates/*`, §2.12, §4.1 / §4.2 (do **not** follow the obsolete template TODOs) |
+| Phase 5 — Granular Session/Set APIs (**next**) | `backend/app/workouts/service.py` (see `update_workout`), `backend/app/workouts/routes.py`, §4.6 / §4.7 |
 | Response/error conventions | `backend/app/core/response.py`, `backend/app/core/exceptions.py` |
 | Frontend API layer | `frontend/src/api/axiosClient.js` |
 | Frontend validation | `frontend/src/lib/validators.js` |
@@ -1336,9 +1574,9 @@ gym-tracker-app/
 .\.venv\Scripts\python.exe -m alembic -x db_url=sqlite:///C:/temp/scratch.db upgrade head
 ```
 
-- Current state: `alembic current` and `alembic heads` both report **`88e993067758 (head)`**, and
+- Current state: `alembic current` and `alembic heads` both report **`68505223da63 (head)`**, and
   `alembic check` is clean. The graph is linear:
-  `f3f47238398b → da9c526717c0 → 88e993067758`.
+  `f3f47238398b → da9c526717c0 → 88e993067758 → 68505223da63`.
 - Alembic reads `DATABASE_URL` through `app/core/config.py` — the same source the app uses.
   `sqlalchemy.url` in `alembic.ini` is blank **on purpose**; do not fill it in.
 - ⚠️ **Never run `alembic downgrade` against `gym.db`** — the baseline's `downgrade()` drops every
@@ -1364,7 +1602,7 @@ Copy-Item gym.db "gym.db.backup-$(Get-Date -Format yyyyMMdd-HHmmss)"
 ```
 
 These snapshots are git-ignored via `*.db.backup-*` in `backend/.gitignore`. Existing snapshots are
-listed in §6; the Phase 3 rollback point is `gym.db.backup-20260906-225407`.
+listed in §6; the Phase 4 rollback point is `gym.db.backup-20260906-230914`.
 
 ### Inspect the database
 
@@ -1441,7 +1679,7 @@ stale the moment anything is committed. Describe state semantically — by phase
 id, by what was verified — so this document only changes when the *project state* changes, not when
 the repository does.
 
-**Last verified:** 2026-09-06, after Phase 3 (Set & Tracking) completed. Locked decisions in §4 were
-**not** touched by that update and remain exactly as originally agreed — §4.3 / §4.4 are now
-*implemented* (§2.4, §2.11) rather than merely decided, apart from granular Set APIs (Phase 5)
-and frontend adaptation (Phase 6).
+**Last verified:** 2026-09-06, after Phase 4 (Templates) completed. Locked decisions in §4 were
+**not** touched by that update and remain exactly as originally agreed — §4.1 / §4.2 are now
+*implemented* (§2.12) rather than merely decided, apart from Session lifecycle / granular Set
+APIs (Phase 5) and frontend adaptation (Phase 6).

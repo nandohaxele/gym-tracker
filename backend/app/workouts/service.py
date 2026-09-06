@@ -9,7 +9,9 @@ N+1 strategy:
       (workout, exercises, sets) + 1 for the exercise catalog refs.
 """
 
+from collections import defaultdict, deque
 from datetime import date as _date
+from typing import Optional
 
 from sqlalchemy.orm import Session, selectinload
 
@@ -22,6 +24,16 @@ from app.workouts.schemas import (
     WorkoutExerciseIn,
     WorkoutUpdate,
 )
+
+_EMPTY_PLANNED: dict[str, None] = {
+    "planned_sets": None,
+    "planned_reps_min": None,
+    "planned_reps_max": None,
+    "planned_duration_seconds_min": None,
+    "planned_duration_seconds_max": None,
+    "planned_distance_meters_min": None,
+    "planned_distance_meters_max": None,
+}
 
 # Exercise tracking type -> Set column that must be present on write.
 # Weight is not a tracking type and is never required by this map.
@@ -152,17 +164,75 @@ def _validate_set_primary_metrics(
         )
 
 
-def _build_exercise_tree(items: list[WorkoutExerciseIn]) -> list[WorkoutExercise]:
+def _planned_from_input(ex_in: WorkoutExerciseIn) -> dict:
+    return {
+        "planned_sets": ex_in.planned_sets,
+        "planned_reps_min": ex_in.planned_reps_min,
+        "planned_reps_max": ex_in.planned_reps_max,
+        "planned_duration_seconds_min": ex_in.planned_duration_seconds_min,
+        "planned_duration_seconds_max": ex_in.planned_duration_seconds_max,
+        "planned_distance_meters_min": ex_in.planned_distance_meters_min,
+        "planned_distance_meters_max": ex_in.planned_distance_meters_max,
+    }
+
+
+def _planned_from_row(row: WorkoutExercise) -> dict:
+    return {
+        "planned_sets": row.planned_sets,
+        "planned_reps_min": row.planned_reps_min,
+        "planned_reps_max": row.planned_reps_max,
+        "planned_duration_seconds_min": row.planned_duration_seconds_min,
+        "planned_duration_seconds_max": row.planned_duration_seconds_max,
+        "planned_distance_meters_min": row.planned_distance_meters_min,
+        "planned_distance_meters_max": row.planned_distance_meters_max,
+    }
+
+
+def _planned_buckets(workout: Workout) -> dict[int, deque[dict]]:
+    """Group existing planned snapshots by exercise_id, in current order.
+
+    Sequential same-id matching is deterministic even when a Session repeats
+    an exercise: the first incoming row with that id takes the first stored
+    snapshot, the next takes the next, extras become NULL.
+    """
+    buckets: dict[int, deque[dict]] = defaultdict(deque)
+    for row in workout.exercises:
+        buckets[row.exercise_id].append(_planned_from_row(row))
+    return buckets
+
+
+def _resolve_planned(
+    ex_in: WorkoutExerciseIn,
+    buckets: Optional[dict[int, deque[dict]]] = None,
+) -> dict:
+    """Use an explicit payload snapshot, else consume a preserved one."""
+    if ex_in.planned_explicitly_set():
+        return _planned_from_input(ex_in)
+    if buckets is not None and buckets[ex_in.exercise_id]:
+        return buckets[ex_in.exercise_id].popleft()
+    return dict(_EMPTY_PLANNED)
+
+
+def _build_exercise_tree(
+    items: list[WorkoutExerciseIn],
+    planned_buckets: Optional[dict[int, deque[dict]]] = None,
+) -> list[WorkoutExercise]:
     """Translate the nested input payload into ORM instances.
 
     `order_index` defaults to the array position when not provided, so the
     client can rely on insertion order without computing indexes itself.
+
+    On PUT, `planned_buckets` supplies Session snapshot values the current
+    frontend does not send, so the destructive child rebuild does not erase
+    planned_* copied at Template Start.
     """
     rows: list[WorkoutExercise] = []
     for ex_idx, ex_in in enumerate(items):
+        planned = _resolve_planned(ex_in, planned_buckets)
         we = WorkoutExercise(
             exercise_id=ex_in.exercise_id,
             order_index=ex_in.order_index if ex_in.order_index is not None else ex_idx,
+            **planned,
         )
         for s_idx, s_in in enumerate(ex_in.sets):
             we.sets.append(
@@ -233,8 +303,12 @@ def update_workout(
 
     # Reassigning the collection orphans the old children -> delete-orphan
     # cascade removes them on flush, taking their Sets along via the
-    # WorkoutExercise.sets cascade.
-    workout.exercises = _build_exercise_tree(payload.exercises)
+    # WorkoutExercise.sets cascade. planned_* is copied off the old rows
+    # first so a frontend that does not send those fields cannot erase the
+    # Template Start snapshot. source_template_id is a scalar on Workout
+    # and is not part of this payload, so provenance is left intact.
+    planned_buckets = _planned_buckets(workout)
+    workout.exercises = _build_exercise_tree(payload.exercises, planned_buckets)
 
     db.commit()
     return get_workout(db, user_id, workout_id)

@@ -11,7 +11,7 @@ Endpoints (mounted under /api by main.py):
     DELETE /workouts/{workout_id}
 """
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Body, Depends, status
 from sqlalchemy.orm import Session
 
 from app.auth.models import User
@@ -19,6 +19,8 @@ from app.core.database import get_db
 from app.core.dependencies import get_current_user
 from app.core.response import ok
 from app.workouts import service
+from app.templates import service as templates_service
+from app.templates.schemas import TemplateDetail, TemplateNameIn
 from app.workouts.schemas import (
     WorkoutCreate,
     WorkoutDetail,
@@ -96,3 +98,21 @@ def delete_workout(
     """
     service.delete_workout(db, current_user.id, workout_id)
     return ok(None)
+
+
+@router.post(
+    "/workouts/{workout_id}/save-as-template",
+    status_code=status.HTTP_201_CREATED,
+)
+def save_workout_as_template(
+    workout_id: int,
+    payload: TemplateNameIn | None = Body(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Derive a personal template from actually recorded Sets."""
+    name = payload.name if payload is not None else None
+    template = templates_service.create_template_from_workout(
+        db, current_user.id, workout_id, name=name
+    )
+    return ok(TemplateDetail.model_validate(template))

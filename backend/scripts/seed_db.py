@@ -7,12 +7,13 @@ Usage (from the `backend/` directory):
 
 from sqlalchemy import inspect
 
-# Importing the model modules registers every mapper. All three are required:
-# User.workouts references "Workout" by name, so omitting the workouts module
-# makes mapper configuration fail on the first query.
+# Importing the model modules registers every mapper. User.workouts and
+# User.templates are string relationships, so omitting those modules makes
+# mapper configuration fail on the first query.
 from app.auth import models as _auth_models  # noqa: F401
 from app.core.database import SessionLocal, engine
 from app.exercises import models as _exercises_models  # noqa: F401
+from app.templates import models as _templates_models  # noqa: F401
 from app.workouts import models as _workouts_models  # noqa: F401
 from app.seed.seeder import run_seed
 

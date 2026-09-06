@@ -91,8 +91,8 @@ def has_recorded_sets(db: Session, exercise_id: int) -> bool:
     """True once at least one Set exists via Exercise -> WorkoutExercise -> Set.
 
     Membership in an empty workout does not count, which is what "first use"
-    means for the tracking-freeze rule. Templates do not exist yet; when they
-    arrive (Phase 4) they must not count either.
+    means for the tracking-freeze rule. TemplateExercise rows do not count:
+    they are intent only and create no Set history.
     """
     return (
         db.query(Set.id)
@@ -479,12 +479,16 @@ def archive_personal_exercise(
     resolving; it only disappears from listings and can no longer be added to a
     workout. There is no physical delete.
 
-    Deferred (Phase 4 - Templates): archiving must also drop the exercise from
-    the owner's future templates. Template entities do not exist yet.
+    Owner personal TemplateExercise rows that reference this exercise are
+    removed in the same transaction. Sessions, Sets, and global templates
+    are not touched. Cleanup is explicit because PRAGMA foreign_keys is off.
     """
+    from app.templates.service import remove_exercise_from_owner_personal_templates
+
     exercise = _load_own_personal(db, user_id, exercise_id)
     if exercise.is_active:
         exercise.is_active = False
+        remove_exercise_from_owner_personal_templates(db, user_id, exercise_id)
         db.commit()
         db.refresh(exercise)
     return exercise

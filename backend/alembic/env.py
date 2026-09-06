@@ -24,6 +24,7 @@ from app.core.database import Base
 # with app/main.py.
 from app.auth import models as _auth_models  # noqa: F401
 from app.exercises import models as _exercises_models  # noqa: F401
+from app.templates import models as _templates_models  # noqa: F401
 from app.workouts import models as _workouts_models  # noqa: F401
 
 config = context.config

@@ -28,9 +28,34 @@ from pydantic import (
     computed_field,
     field_serializer,
     field_validator,
+    model_validator,
 )
 
 from app.workouts.models import SetType
+
+
+def _require_planned_pair(
+    min_value: Optional[int], max_value: Optional[int], label: str
+) -> None:
+    if min_value is None and max_value is None:
+        return
+    if min_value is None or max_value is None:
+        raise ValueError(f"{label} min and max must both be set")
+    if min_value > max_value:
+        raise ValueError(f"{label} min must be <= max")
+
+
+_PLANNED_FIELD_NAMES = frozenset(
+    {
+        "planned_sets",
+        "planned_reps_min",
+        "planned_reps_max",
+        "planned_duration_seconds_min",
+        "planned_duration_seconds_max",
+        "planned_distance_meters_min",
+        "planned_distance_meters_max",
+    }
+)
 
 
 # ---- Set schemas ---------------------------------------------------------
@@ -154,7 +179,12 @@ class ExerciseRefOut(BaseModel):
 # ---- WorkoutExercise schemas --------------------------------------------
 
 class WorkoutExerciseIn(BaseModel):
-    """Nested input when (re)building a workout's exercise list."""
+    """Nested input when (re)building a workout's exercise list.
+
+    `planned_*` is optional. The current frontend does not send it. On PUT,
+    omitted planned fields are preserved from the existing Session snapshot
+    (see workouts.service). Ad-hoc POST leaves them NULL.
+    """
 
     exercise_id: int = Field(gt=0, description="Catalog exercise id (must exist).")
     sets: list[SetIn] = Field(default_factory=list)
@@ -163,6 +193,32 @@ class WorkoutExerciseIn(BaseModel):
         ge=0,
         description="Position within the parent workout; defaults to array index.",
     )
+    planned_sets: Optional[int] = Field(default=None, gt=0)
+    planned_reps_min: Optional[int] = Field(default=None, gt=0)
+    planned_reps_max: Optional[int] = Field(default=None, gt=0)
+    planned_duration_seconds_min: Optional[int] = Field(default=None, gt=0)
+    planned_duration_seconds_max: Optional[int] = Field(default=None, gt=0)
+    planned_distance_meters_min: Optional[int] = Field(default=None, gt=0)
+    planned_distance_meters_max: Optional[int] = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def _planned_pairs(self) -> "WorkoutExerciseIn":
+        _require_planned_pair(self.planned_reps_min, self.planned_reps_max, "planned_reps")
+        _require_planned_pair(
+            self.planned_duration_seconds_min,
+            self.planned_duration_seconds_max,
+            "planned_duration_seconds",
+        )
+        _require_planned_pair(
+            self.planned_distance_meters_min,
+            self.planned_distance_meters_max,
+            "planned_distance_meters",
+        )
+        return self
+
+    def planned_explicitly_set(self) -> bool:
+        """True when the client sent at least one planned_* field."""
+        return bool(self.model_fields_set & _PLANNED_FIELD_NAMES)
 
 
 class WorkoutExerciseOut(BaseModel):
@@ -174,6 +230,13 @@ class WorkoutExerciseOut(BaseModel):
     exercise: ExerciseRefOut
     sets: list[SetOut] = Field(default_factory=list)
     order_index: int
+    planned_sets: Optional[int] = None
+    planned_reps_min: Optional[int] = None
+    planned_reps_max: Optional[int] = None
+    planned_duration_seconds_min: Optional[int] = None
+    planned_duration_seconds_max: Optional[int] = None
+    planned_distance_meters_min: Optional[int] = None
+    planned_distance_meters_max: Optional[int] = None
 
 
 # ---- Workout schemas -----------------------------------------------------
@@ -229,6 +292,7 @@ class WorkoutDetail(BaseModel):
     name: str
     date: _date
     created_at: datetime
+    source_template_id: Optional[int] = None
     exercises: list[WorkoutExerciseOut] = Field(default_factory=list)
 
 
