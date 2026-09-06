@@ -57,57 +57,108 @@ export const registerSchema = z
   });
 
 /* -------------------------------------------------------------------------- *
- * Workout schemas (Phase 5 Step 2)
+ * Session / Template / Exercise schemas (Phase 6)
  *
- * Rispecchiano il contratto del backend (backend/app/workouts/schemas.py):
- *   - workout.name : richiesto, 1..120 caratteri
- *   - workout.date : YYYY-MM-DD (qui sempre presente, default = oggi)
- *   - set.reps     : intero > 0
- *   - set.weight   : numero >= 0
- *
- * I campi `name`/`muscle_group` dentro un esercizio sono solo di supporto alla
- * UI (per mostrare l'esercizio scelto) e non vengono inviati al backend.
+ * Live Session editing uses granular APIs. Draft set rows are not validated
+ * as historical Sets — only a recorded row must carry the primary metric.
  * -------------------------------------------------------------------------- */
 
-// `z.coerce.number` converte la stringa dell'input in numero. Una stringa vuota
-// diventerebbe 0, quindi pre-processiamo "" -> undefined per far scattare il
-// messaggio "Required" invece di un fuorviante "deve essere > 0".
 const blankToUndefined = (value) =>
   value === '' || value === null ? undefined : value;
 
-export const setSchema = z.object({
-  // Server Set.id. Named set_id so react-hook-form's field `id` is not reused.
-  set_id: z.number().int().positive().optional(),
-  reps: z.preprocess(
-    blankToUndefined,
-    z.coerce
-      .number({ invalid_type_error: 'Required' })
-      .int('Whole number')
-      .gt(0, 'Must be > 0')
-  ),
-  weight: z.preprocess(
-    blankToUndefined,
-    z.coerce
-      .number({ invalid_type_error: 'Required' })
-      .min(0, 'Must be ≥ 0')
-  ),
-});
+const optionalPositiveInt = z.preprocess(
+  blankToUndefined,
+  z.coerce.number().int().gt(0).optional()
+);
 
-export const workoutExerciseSchema = z.object({
-  workout_exercise_id: z.number().int().positive().optional(),
-  exercise_id: z.coerce.number().int().positive(),
-  // Solo per la UI, non inviati al backend.
-  name: z.string().optional(),
-  muscle_group: z.string().optional(),
-  sets: z.array(setSchema).min(1, 'Add at least one set'),
-});
-
-export const workoutSchema = z.object({
+export const sessionMetaSchema = z.object({
   name: z
     .string()
     .trim()
     .min(1, 'Workout name is required')
     .max(120, 'Name must be 120 characters or fewer'),
   date: z.string().min(1, 'Date is required'),
-  exercises: z.array(workoutExerciseSchema).min(1, 'Add at least one exercise'),
 });
+
+export const templateNameSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1, 'Template name is required')
+    .max(120, 'Name must be 120 characters or fewer'),
+});
+
+export const templateExerciseSchema = z
+  .object({
+    exercise_id: z.coerce.number().int().positive(),
+    name: z.string().optional(),
+    muscle_group: z.string().nullable().optional(),
+    primary_tracking_type: z.enum(['reps', 'duration', 'distance']).optional(),
+    secondary_tracking_types: z.array(z.enum(['reps', 'duration', 'distance'])).optional(),
+    target_sets: z.preprocess(
+      blankToUndefined,
+      z.coerce
+        .number({ invalid_type_error: 'Required' })
+        .int()
+        .gt(0, 'Must be > 0')
+    ),
+    target_reps_min: optionalPositiveInt,
+    target_reps_max: optionalPositiveInt,
+    target_duration_seconds_min: optionalPositiveInt,
+    target_duration_seconds_max: optionalPositiveInt,
+    target_distance_meters_min: optionalPositiveInt,
+    target_distance_meters_max: optionalPositiveInt,
+  })
+  .superRefine((value, ctx) => {
+    const pairs = [
+      ['target_reps_min', 'target_reps_max', 'Reps'],
+      ['target_duration_seconds_min', 'target_duration_seconds_max', 'Duration'],
+      ['target_distance_meters_min', 'target_distance_meters_max', 'Distance'],
+    ];
+    for (const [minKey, maxKey, label] of pairs) {
+      const min = value[minKey];
+      const max = value[maxKey];
+      if (min == null && max == null) continue;
+      if (min == null || max == null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `${label} min and max must both be set`,
+          path: [min == null ? minKey : maxKey],
+        });
+      } else if (min > max) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Min must be ≤ max',
+          path: [minKey],
+        });
+      }
+    }
+  });
+
+export const templateSchema = templateNameSchema.extend({
+  exercises: z.array(templateExerciseSchema).min(1, 'Add at least one exercise'),
+});
+
+export const personalExerciseSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1, 'Name is required')
+    .max(120, 'Name must be 120 characters or fewer'),
+  primary_tracking_type: z.enum(['reps', 'duration', 'distance'], {
+    required_error: 'Choose how this exercise is tracked',
+  }),
+  secondary_tracking_types: z
+    .array(z.enum(['reps', 'duration', 'distance']))
+    .optional()
+    .default([]),
+  muscle_group: z
+    .string()
+    .trim()
+    .max(60)
+    .optional()
+    .transform((value) => (value ? value : undefined)),
+});
+
+// Kept for any leftover imports; live editor no longer submits this tree.
+export const workoutSchema = sessionMetaSchema;

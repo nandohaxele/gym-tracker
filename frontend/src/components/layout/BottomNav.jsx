@@ -1,9 +1,9 @@
 // BottomNav - mobile-first primary navigation with large tap targets.
 // Sticky to the bottom, safe-area aware. Center action is an emphasized CTA.
-// TODO (Phase 5+): wire the "Profile" tab and any future top-level sections.
+// Profile remains deferred. The third slot is Templates.
 
 import { NavLink } from 'react-router-dom';
-import { Home, Plus, User } from 'lucide-react';
+import { ClipboardList, Home, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils.js';
 
 function NavItem({ to, icon: Icon, label }) {
@@ -49,17 +49,7 @@ export default function BottomNav({ floating = true }) {
           </NavLink>
         </div>
 
-        {/* Placeholder tab for a future profile/settings section. */}
-        <button
-          type="button"
-          disabled
-          aria-label="Profile (coming soon)"
-          title="Coming soon"
-          className="flex min-h-[56px] flex-1 cursor-not-allowed flex-col items-center justify-center gap-1 text-xs font-medium text-muted-foreground/50"
-        >
-          <User className="h-5 w-5" aria-hidden="true" />
-          <span>Profile</span>
-        </button>
+        <NavItem to="/templates" icon={ClipboardList} label="Templates" />
       </div>
     </nav>
   );

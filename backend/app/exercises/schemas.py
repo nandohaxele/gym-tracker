@@ -9,9 +9,10 @@ can reproduce them from `name` if they ever need to.
 """
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
 from app.exercises.models import TrackingType
 
@@ -47,6 +48,17 @@ class ExerciseOut(BaseModel):
     primary_tracking_type: TrackingType
     secondary_tracking_types: list[TrackingType] = Field(default_factory=list)
     synonyms: list[ExerciseSynonymOut] = Field(default_factory=list)
+
+
+class LastWeightOut(BaseModel):
+    """Latest recorded load for one exercise in the caller's Sessions."""
+
+    exercise_id: int
+    weight_kg: Optional[Decimal] = None
+
+    @field_serializer("weight_kg")
+    def _decimal_as_number(self, value: Optional[Decimal]) -> Optional[float]:
+        return None if value is None else float(value)
 
 
 # ---- Input ---------------------------------------------------------------

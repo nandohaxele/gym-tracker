@@ -10,7 +10,11 @@ import { cn } from '@/lib/utils.js';
 // space by letting the BottomNav flow at the end of the content instead of
 // staying pinned over the form.
 function isEditorRoute(pathname) {
-  return pathname === '/workouts/new' || pathname.endsWith('/edit');
+  return (
+    pathname === '/workouts/new' ||
+    pathname === '/templates/new' ||
+    pathname.endsWith('/edit')
+  );
 }
 
 export default function AppShell() {

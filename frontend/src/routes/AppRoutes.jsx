@@ -11,8 +11,12 @@ import AppShell from '@/components/layout/AppShell.jsx';
 import LoginPage from '@/pages/LoginPage.jsx';
 import RegisterPage from '@/pages/RegisterPage.jsx';
 import HomePage from '@/pages/HomePage.jsx';
+import StartWorkoutPage from '@/pages/StartWorkoutPage.jsx';
 import WorkoutEditorPage from '@/pages/WorkoutEditorPage.jsx';
 import WorkoutDetailPage from '@/pages/WorkoutDetailPage.jsx';
+import TemplatesPage from '@/pages/TemplatesPage.jsx';
+import TemplateDetailPage from '@/pages/TemplateDetailPage.jsx';
+import TemplateEditorPage from '@/pages/TemplateEditorPage.jsx';
 import NotFoundPage from '@/pages/NotFoundPage.jsx';
 
 export default function AppRoutes() {
@@ -46,9 +50,13 @@ export default function AppRoutes() {
       >
         <Route index element={<Navigate to="/home" replace />} />
         <Route path="/home" element={<HomePage />} />
-        <Route path="/workouts/new" element={<WorkoutEditorPage />} />
+        <Route path="/workouts/new" element={<StartWorkoutPage />} />
         <Route path="/workouts/:id" element={<WorkoutDetailPage />} />
         <Route path="/workouts/:id/edit" element={<WorkoutEditorPage />} />
+        <Route path="/templates" element={<TemplatesPage />} />
+        <Route path="/templates/new" element={<TemplateEditorPage />} />
+        <Route path="/templates/:id" element={<TemplateDetailPage />} />
+        <Route path="/templates/:id/edit" element={<TemplateEditorPage />} />
       </Route>
 
       <Route path="*" element={<NotFoundPage />} />

@@ -21,17 +21,16 @@ from decimal import Decimal
 from typing import Optional
 
 from pydantic import (
-    AliasChoices,
     BaseModel,
     ConfigDict,
     Field,
-    computed_field,
     field_serializer,
     field_validator,
     model_validator,
 )
 
 from app.core.utc import serialize_utc
+from app.exercises.models import TrackingType
 from app.workouts.models import SetType
 
 
@@ -64,17 +63,13 @@ _PLANNED_FIELD_NAMES = frozenset(
 class SetIn(BaseModel):
     """Nested input for a single set, used by both create and update.
 
-    `weight` is accepted as a compatibility alias for `weight_kg` so the
-    current frontend can keep sending the pre-Phase-3 field name.
     Optional `id` lets PUT match an existing Set without recreating it.
     """
-
-    model_config = ConfigDict(populate_by_name=True)
 
     id: Optional[int] = Field(
         default=None,
         gt=0,
-        description="Existing Set id. Omitted by the current frontend.",
+        description="Existing Set id.",
     )
     reps: Optional[int] = Field(
         default=None,
@@ -86,7 +81,6 @@ class SetIn(BaseModel):
         ge=0,
         max_digits=6,
         decimal_places=2,
-        validation_alias=AliasChoices("weight_kg", "weight"),
         description=(
             "Load in kilograms. Optional; 0 is valid and distinct from null."
         ),
@@ -136,11 +130,7 @@ class SetIn(BaseModel):
 
 
 class SetOut(BaseModel):
-    """Set representation in API responses.
-
-    Emits both `weight_kg` and `weight` so the current frontend, which still
-    reads `set.weight`, keeps working until Phase 6.
-    """
+    """Set representation in API responses. Canonical load field is `weight_kg`."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -154,12 +144,7 @@ class SetOut(BaseModel):
     set_type: SetType
     order_index: int
 
-    @computed_field
-    @property
-    def weight(self) -> Optional[Decimal]:
-        return self.weight_kg
-
-    @field_serializer("weight_kg", "weight", "rpe")
+    @field_serializer("weight_kg", "rpe")
     def _decimal_as_number(self, value: Optional[Decimal]) -> Optional[float]:
         return None if value is None else float(value)
 
@@ -167,15 +152,12 @@ class SetOut(BaseModel):
 class SetPatch(BaseModel):
     """Partial update for one Set. Only provided fields are applied."""
 
-    model_config = ConfigDict(populate_by_name=True)
-
     reps: Optional[int] = Field(default=None, gt=0)
     weight_kg: Optional[Decimal] = Field(
         default=None,
         ge=0,
         max_digits=6,
         decimal_places=2,
-        validation_alias=AliasChoices("weight_kg", "weight"),
     )
     duration_seconds: Optional[int] = Field(default=None, gt=0)
     distance_meters: Optional[int] = Field(default=None, gt=0)
@@ -205,13 +187,11 @@ class ReorderIn(BaseModel):
 # ---- Embedded exercise reference ----------------------------------------
 
 class ExerciseRefOut(BaseModel):
-    """Slim exercise reference embedded inside a WorkoutExerciseOut.
+    """Exercise reference embedded inside Session / Template exercise rows.
 
-    Kept intentionally minimal: enough for the UI to render the workout
-    without hitting `/exercises` again.
-
-    `muscle_group` is optional because personal exercises may omit it, and
-    because history can reference an exercise that has since been archived.
+    Includes tracking so historical Sessions stay input-aware even after the
+    exercise is archived and disappears from `GET /exercises`.
+    `muscle_group` is optional because personal exercises may omit it.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -219,6 +199,9 @@ class ExerciseRefOut(BaseModel):
     id: int
     name: str
     muscle_group: Optional[str] = None
+    is_active: bool = True
+    primary_tracking_type: TrackingType
+    secondary_tracking_types: list[TrackingType] = Field(default_factory=list)
 
 
 # ---- WorkoutExercise schemas --------------------------------------------

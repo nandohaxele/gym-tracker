@@ -1,6 +1,3 @@
-// WorkoutDetailPage - read-only nested view of a workout (exercises + sets),
-// with Edit and Delete (confirm) actions.
-
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
@@ -12,20 +9,24 @@ import {
   AlertCircle,
   RotateCw,
   Dumbbell,
+  Check,
 } from 'lucide-react';
 
-import { getWorkout, deleteWorkout } from '@/api/workouts.js';
+import { completeWorkout, deleteWorkout, getWorkout } from '@/api/workouts.js';
 import useAsync from '@/hooks/useAsync.js';
-import { formatDate, formatWeight } from '@/utils/format.js';
+import { formatDate } from '@/utils/format.js';
+import { formatPlannedHint, formatSetLine } from '@/lib/tracking.js';
 import PageContainer from '@/components/ui/PageContainer.jsx';
 import StatusView from '@/components/ui/StatusView.jsx';
 import AppButton, { buttonVariants } from '@/components/ui/AppButton.jsx';
 import Modal from '@/components/ui/Modal.jsx';
+import SaveAsTemplateDialog from '@/components/workouts/SaveAsTemplateDialog.jsx';
 import { cn } from '@/lib/utils.js';
 
 function ExerciseSection({ workoutExercise }) {
   const { exercise, sets = [] } = workoutExercise;
   const orderedSets = [...sets].sort((a, b) => a.order_index - b.order_index);
+  const hint = formatPlannedHint(workoutExercise);
 
   return (
     <div className="flex flex-col gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm">
@@ -36,6 +37,7 @@ function ExerciseSection({ workoutExercise }) {
             {exercise.muscle_group}
           </p>
         )}
+        {hint && <p className="mt-1 text-xs text-muted-foreground">{hint}</p>}
       </div>
 
       {orderedSets.length > 0 ? (
@@ -49,13 +51,13 @@ function ExerciseSection({ workoutExercise }) {
                 Set {index + 1}
               </span>
               <span className="font-semibold tabular-nums">
-                {set.reps} reps · {formatWeight(set.weight)}
+                {formatSetLine(set)}
               </span>
             </li>
           ))}
         </ul>
       ) : (
-        <p className="text-sm text-muted-foreground">No sets logged.</p>
+        <p className="text-sm text-muted-foreground">No sets logged yet.</p>
       )}
     </div>
   );
@@ -65,30 +67,46 @@ export default function WorkoutDetailPage() {
   const navigate = useNavigate();
   const { id } = useParams();
 
-  const { data: workout, error, loading, reload } = useAsync(
+  const { data: workout, error, loading, reload, setData } = useAsync(
     () => getWorkout(id),
     [id]
   );
 
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [saveOpen, setSaveOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState(null);
+  const [finishing, setFinishing] = useState(false);
+  const [actionError, setActionError] = useState(null);
 
   const handleDelete = async () => {
     setDeleting(true);
-    setDeleteError(null);
+    setActionError(null);
     try {
       await deleteWorkout(id);
       navigate('/home', { replace: true });
     } catch (err) {
-      setDeleteError(err?.message || 'Could not delete the workout.');
+      setActionError(err?.message || 'Could not delete the workout.');
       setDeleting(false);
+    }
+  };
+
+  const handleFinish = async () => {
+    setFinishing(true);
+    setActionError(null);
+    try {
+      const updated = await completeWorkout(id);
+      setData(updated);
+    } catch (err) {
+      setActionError(err?.message || 'Could not finish the workout.');
+    } finally {
+      setFinishing(false);
     }
   };
 
   const orderedExercises = workout
     ? [...(workout.exercises || [])].sort((a, b) => a.order_index - b.order_index)
     : [];
+  const isActive = workout?.ended_at == null;
 
   return (
     <PageContainer className="flex flex-col gap-6">
@@ -125,12 +143,28 @@ export default function WorkoutDetailPage() {
       ) : (
         <>
           <div className="flex flex-col gap-1">
-            <h1 className="text-2xl font-bold tracking-tight">{workout.name}</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-bold tracking-tight">{workout.name}</h1>
+              <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                {isActive ? 'Active' : 'Completed'}
+              </span>
+            </div>
             <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
               <Calendar className="h-4 w-4" aria-hidden="true" />
               {formatDate(workout.date)}
             </p>
           </div>
+
+          {actionError && (
+            <p className="text-sm font-medium text-destructive">{actionError}</p>
+          )}
+
+          {isActive && (
+            <AppButton block size="lg" loading={finishing} onClick={handleFinish}>
+              <Check className="h-4 w-4" aria-hidden="true" />
+              {finishing ? 'Finishing…' : 'Finish Workout'}
+            </AppButton>
+          )}
 
           <div className="flex gap-3">
             <Link
@@ -149,6 +183,10 @@ export default function WorkoutDetailPage() {
               Delete
             </AppButton>
           </div>
+
+          <AppButton variant="ghost" block onClick={() => setSaveOpen(true)}>
+            Save as My Template
+          </AppButton>
 
           {orderedExercises.length > 0 ? (
             <div className="flex flex-col gap-3">
@@ -176,37 +214,34 @@ export default function WorkoutDetailPage() {
             This permanently deletes “{workout?.name}” and all of its exercises and
             sets. This action can't be undone.
           </p>
-
-          {deleteError && (
-            <div
-              role="alert"
-              className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3.5 py-3 text-sm text-destructive"
-            >
-              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-              <span>{deleteError}</span>
-            </div>
-          )}
-
-          <div className="flex flex-col gap-3 sm:flex-row-reverse">
-            <AppButton
-              variant="destructive"
-              block
-              loading={deleting}
-              onClick={handleDelete}
-            >
-              {deleting ? 'Deleting…' : 'Delete workout'}
-            </AppButton>
-            <AppButton
-              variant="ghost"
-              block
-              disabled={deleting}
-              onClick={() => setConfirmOpen(false)}
-            >
-              Cancel
-            </AppButton>
-          </div>
+          <AppButton
+            variant="destructive"
+            block
+            loading={deleting}
+            onClick={handleDelete}
+          >
+            {deleting ? 'Deleting…' : 'Delete workout'}
+          </AppButton>
+          <AppButton
+            variant="ghost"
+            block
+            disabled={deleting}
+            onClick={() => setConfirmOpen(false)}
+          >
+            Cancel
+          </AppButton>
         </div>
       </Modal>
+
+      {workout && (
+        <SaveAsTemplateDialog
+          open={saveOpen}
+          workoutId={id}
+          workoutName={workout.name}
+          onClose={() => setSaveOpen(false)}
+          onSaved={(template) => navigate(`/templates/${template.id}`)}
+        />
+      )}
     </PageContainer>
   );
 }

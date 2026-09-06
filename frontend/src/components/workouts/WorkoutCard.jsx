@@ -13,7 +13,14 @@ export default function WorkoutCard({ workout }) {
       className="flex items-center gap-3 rounded-2xl border border-border bg-card px-4 py-4 shadow-sm transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-[0.99]"
     >
       <div className="min-w-0 flex-1">
-        <p className="truncate font-semibold leading-tight">{workout.name}</p>
+        <div className="flex items-center gap-2">
+          <p className="truncate font-semibold leading-tight">{workout.name}</p>
+          {workout.ended_at == null && (
+            <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+              Active
+            </span>
+          )}
+        </div>
         <p className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
           <Calendar className="h-3.5 w-3.5" aria-hidden="true" />
           {formatDate(workout.date)}

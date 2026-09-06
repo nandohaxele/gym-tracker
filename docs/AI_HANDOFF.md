@@ -11,13 +11,13 @@
 > **Phase 2 — Exercise Domain: COMPLETED** (§2.10) ·
 > **Phase 3 — Set & Tracking: COMPLETED** (§2.11) ·
 > **Phase 4 — Templates: COMPLETED** (§2.12) ·
-> **Phase 5 — Granular Session/Set APIs: COMPLETED** (§2.13).
+> **Phase 5 — Granular Session/Set APIs: COMPLETED** (§2.13) ·
+> **Phase 6 — Frontend adaptation: COMPLETED** (§2.14).
 > Alembic owns schema evolution: baseline **`f3f47238398b`**, head **`0153e917bf85`**.
-> `Workout` remains the Session. `started_at` / `ended_at` exist; NULL
-> `ended_at` means active. PUT reconciles children in place. Granular
-> WorkoutExercise and Set APIs are live. Existing data preserved
-> (9 / 23 / 8 / 17 / 58), templates 0 / 0. Child ids unchanged.
-> **Next task: Phase 6 — Frontend adaptation** (§7).
+> No Phase 6 migration. Session editor uses granular APIs; Templates UI is
+> live; `weight` alias retired in favor of `weight_kg`. Two additive reads:
+> tracking on `ExerciseRefOut`, `GET /api/exercises/last-weights`.
+> **Next task: Phase 7 — Stabilization & Tests** (§7). Do not start it here.
 >
 > This document deliberately records **no commit hash**. Git is the source of truth for revision
 > history — run `git log`/`git status` if you need it. Describe state semantically here so this file
@@ -240,8 +240,8 @@ The Set-side tracking model from §4.3 / §4.4 is implemented. Full delivery det
   optional. Unconfigured extra metrics are allowed. Historical rows are **not** re-validated on
   read — `get_workout` still returns the pre-Phase-3 plank set (id 38) that has no
   `duration_seconds`.
-- Nested workout `SetIn` accepts `weight` as a compatibility alias for `weight_kg`; `SetOut`
-  emits both so the current frontend keeps working. RPE/RIR are accepted and returned but have
+- Nested workout `SetIn` / `SetOut` use canonical `weight_kg` only. The temporary
+  `weight` alias was retired in Phase 6. RPE/RIR are accepted and returned but have
   no UI.
 - Granular Set APIs (Phase 5): `POST /api/workout-exercises/{id}/sets`,
   `PATCH /api/sets/{id}`, `DELETE /api/sets/{id}`, plus
@@ -252,9 +252,9 @@ The Set-side tracking model from §4.3 / §4.4 is implemented. Full delivery det
   edited Set. Historical set 38 stays readable; editing it without
   `duration_seconds` is still 422.
 
-**NOT implemented:** frontend tracking fields (Phase 6). The dead
-`frontend/src/api/sets.js` still documents `POST /sets` + `PUT /sets/{id}` and
-is unused — do not implement those paths.
+Frontend Set writes use `POST /workout-exercises/{id}/sets` and
+`PATCH`/`DELETE /sets/{id}` (`frontend/src/api/sets.js`). Do not reintroduce
+`POST /sets` or `PUT /sets/{id}`.
 
 ## 2.5 Frontend pages / features — IMPLEMENTED
 
@@ -266,9 +266,13 @@ Routing (`src/routes/AppRoutes.jsx`, with `ProtectedRoute` / `PublicRoute` guard
 | `/register` | `RegisterPage` | public-only |
 | `/` | — | protected; **redirects to `/home`** (`<Route index>` → `<Navigate to="/home" replace />`) |
 | `/home` | `HomePage` | protected — this is the real home route, **not** `/` |
-| `/workouts/new` | `WorkoutEditorPage` | protected, create mode |
+| `/workouts/new` | `StartWorkoutPage` | protected — name/date only, then active Session |
 | `/workouts/:id` | `WorkoutDetailPage` | protected |
-| `/workouts/:id/edit` | `WorkoutEditorPage` | protected, edit mode |
+| `/workouts/:id/edit` | `WorkoutEditorPage` | protected, live Session editor |
+| `/templates` | `TemplatesPage` | protected — global vs My Templates |
+| `/templates/new` | `TemplateEditorPage` | protected |
+| `/templates/:id` | `TemplateDetailPage` | protected |
+| `/templates/:id/edit` | `TemplateEditorPage` | protected, personal only |
 | `*` | `NotFoundPage` | |
 
 Working features:
@@ -282,17 +286,25 @@ Working features:
   script in `index.html`; `ThemeToggle` in the header.
 - **Layout**: `AppShell` + `Header` + `BottomNav`, mobile-first with safe-area padding.
 - **Workout list**: `WorkoutList` / `WorkoutCard` on `HomePage`.
-- **Workout editor**: `WorkoutForm` (RHF + Zod) with nested field arrays — exercises
-  (`ExerciseFieldCard`) each containing sets (`SetRow`), plus `ExercisePicker` (search + grouped by
-  `muscle_group`) in a `Modal`.
-- **Workout detail**: renders exercises and sets, formatted as `reps · kg`.
+- **Workout editor**: live Session screen. Name/date via PATCH. Add/remove
+  WorkoutExercises and record Sets through granular APIs. Client-side planned
+  draft rows are created from `planned_*` and are **not** persisted until the
+  primary metric is present. Plus starts an active Session (`POST /workouts`
+  with no Sets).
+- **Workout detail**: tracking-aware set lines (`weight_kg`, duration, distance),
+  planned hints, Finish Workout, Save as My Template.
+- **Templates**: list (global vs My Templates), start, personalize, personal
+  create/edit/delete, save-Session-as-template.
+- **Exercise picker**: grouped catalog plus in-picker personal create
+  (name + primary tracking + optional extras / muscle group).
 - **UI primitives**: `AppButton`, `AppInput`, `AuthCard`, `PageContainer`, `LoadingScreen`,
   `StatusView` (empty/error states), `Modal`, `Label`.
 - **Hooks**: `useAuth`, `useTheme`, `useAsync`, `useRestTimer`.
 
 **NOT implemented / not wired:** rest timer UI (component exists but is imported by nothing —
-see §2.8), templates UI, exercise creation UI, statistics/charts, profile/settings page, offline
-support, PWA, i18n framework (some Italian strings are hardcoded).
+see §2.8), archive/restore UI, statistics/charts, profile/settings page, offline
+support, PWA, i18n framework (some Italian strings are hardcoded). Templates UI
+and in-picker personal exercise creation shipped in Phase 6.
 
 ## 2.6 API structure — CURRENT SURFACE
 
@@ -302,6 +314,7 @@ POST   /api/auth/register
 POST   /api/auth/login
 GET    /api/auth/me
 GET    /api/exercises
+GET    /api/exercises/last-weights
 POST   /api/exercises
 PATCH  /api/exercises/{exercise_id}
 POST   /api/exercises/{exercise_id}/archive
@@ -347,10 +360,8 @@ Note for whoever builds the real suite: `httpx` is **not installed**, so
 
 ## 2.8 Known inconsistencies (verified)
 
-1. **`frontend/src/api/sets.js` still documents the wrong Set URLs.** `api_contract.md` and
-   that dead module list `POST /sets`, `PUT /sets/{id}`, `DELETE /sets/{id}`. Phase 5 implemented
-   the locked surface instead (`POST /workout-exercises/{id}/sets`, `PATCH`/`DELETE /sets/{id}`).
-   The module is imported by no component, so it does not break the app. Update it in Phase 6.
+1. ✅ **`frontend/src/api/sets.js` now calls the Phase 5 Set URLs.** `api_contract.md` is
+   still stale (`POST /sets`, `PUT /sets/{id}`). Do not reintroduce those paths.
 2. **`PRD.md` lists "programs or templates" as a non-goal**, which directly contradicts the locked
    decision that Templates are a core entity (§4). The locked decisions win.
 3. **`architecture.md` schema is stale**: it shows `WorkoutExercise` without `order_index`, which
@@ -754,6 +765,22 @@ on new Sets; PATCH merges persisted primary; set 38 readable and weight-PATCH
 grandfathered; nulling its primary rejected; cross-user child writes 404; Start
 is active with snapshot; `planned_*` / provenance survive PUT; UTC-aware
 round-trip after SQLite. Live `gym.db` received **no** test Sessions.
+
+## 2.14 Frontend adaptation — IMPLEMENTED (Phase 6, COMPLETED)
+
+No migration. Head remains `0153e917bf85`.
+
+- **Additive reads:** `ExerciseRefOut` now includes `primary_tracking_type`,
+  `secondary_tracking_types`, and `is_active` (Session/Template detail loads
+  `exercise.tracking`). `GET /api/exercises/last-weights?ids=&exclude_workout_id=`
+  returns the caller's latest non-null `weight_kg` per exercise (0 counts).
+- **`weight` alias retired** from `SetIn` / `SetPatch` / `SetOut`.
+- **Frontend:** Templates tab (replaces unused Profile slot); Start Template
+  opens an independent Session editor; planned_* becomes client draft rows;
+  drafts never POST until the primary metric is present; live editor uses
+  PATCH + granular WE/Set APIs; Finish calls `/complete` only; personal
+  exercise create lives in the picker. No RPE/RIR/`set_type` UI. No AI/voice.
+- **PUT** remains in `workouts.js` as an unused fallback.
 
 ---
 
@@ -1237,10 +1264,8 @@ All storage uses canonical units. Any unit conversion is a presentation concern.
 
 1. **SQLite holds existing real data** (`backend/gym.db`, 9 users / 8 workouts / 58 sets). Migrations
    must be non-destructive. See §6.
-4. **The frontend `sets.js` module still calls the wrong Set URLs.**
-   `frontend/src/api/sets.js` (+ `api_contract.md`) describe `POST /sets`, `PUT /sets/{id}`,
-   `DELETE /sets/{id}`. Phase 5 implemented the locked nested/PATCH surface instead. Currently
-   harmless because the module is unused. Update or delete it in Phase 6.
+4. ✅ **Resolved by Phase 6.** `frontend/src/api/sets.js` uses the Phase 5 nested/PATCH
+   surface. `api_contract.md` is still stale.
 5. ✅ **Resolved by Phase 5.** PUT reconciles children in place. Pre-Phase-5 ID gaps remain
    as historical fingerprint (17 WE / max 32; 58 Sets / max 98) and are not data loss.
 6. **Workout date handling is inconsistent and can be wrong around local midnight.**
@@ -1303,9 +1328,8 @@ All storage uses canonical units. Any unit conversion is a presentation concern.
     for a hanging leg raise, "Bicep Curl" for either curl variant). Expect to curate this.
 19. **`exercise_synonyms.locale` is stored but not used.** Everything is seeded as `en` and the
     resolver matches across all locales. It exists so adding real i18n later is not a migration.
-20. **`weight` remains a compatibility alias for `weight_kg`.** The current frontend still reads
-    and writes `weight`. Phase 3 kept the alias on `SetIn`/`SetOut` so the editor and detail page
-    do not break. Drop the alias when Phase 6 adapts the UI.
+20. ✅ **Resolved by Phase 6.** `SetIn` / `SetPatch` / `SetOut` use `weight_kg` only.
+    The frontend no longer reads or writes `weight`.
 21. **Historical plank set id 38 has no `duration_seconds`.** It was recorded under the old
     reps+weight schema (`reps=200`, `weight_kg=96`) and was deliberately not rewritten. Reads
     succeed; a PUT of workout 5 that resubmits that set without `duration_seconds` is a 422
@@ -1354,7 +1378,7 @@ These are **not** oversights. Each is a locked decision whose prerequisite does 
 | ✅ **"Archiving a personal exercise removes it from future personal templates"** (§4.5) | **done in Phase 4** | `archive_personal_exercise` deletes the owner's personal `TemplateExercise` rows for that id. Sessions are not rewritten. |
 | **Full frontend adaptation** — tracking UI, personal-exercise UI, archived/restore views, `ExercisePicker` redesign | **Phase 6 — Frontend adaptation** | Phase 2 was backend-scoped. The single one-line null-safety guard in `ExercisePicker.jsx` (§2.10) is a compatibility fix, not adaptation. |
 | **`PRAGMA foreign_keys=ON` at runtime** | still undecided (§5.12) | A runtime behavior change, not infrastructure. Phase 2 confirmed again that it is not needed for safe migrations and left it alone. |
-| **HTTP resolver endpoint** | whenever a consumer needs it (likely Phase 6/7) | `service.resolve_exercise` is fully implemented and tested, but nothing calls it over HTTP yet, and inventing an endpoint shape without a consumer would be speculative. The AI/voice layer (Phase 7) is its obvious first user. |
+| **HTTP resolver endpoint** | whenever a consumer needs it (likely Phase 8) | `service.resolve_exercise` is fully implemented and tested, but nothing calls it over HTTP yet, and inventing an endpoint shape without a consumer would be speculative. AI readiness (Phase 8) is its obvious first user. |
 | **Restore-from-archive** | not scheduled | §4.5 says "no archived/restore UI for now". No API either, so nothing has to be un-built later. The archived row keeps its normalized name precisely so a restore stays possible (§3). |
 
 ## 5.3 Deliberately deferred by Phase 3
@@ -1364,7 +1388,7 @@ These are **not** oversights.
 | Deferred behavior | Where it belongs | Why it was left |
 |---|---|---|
 | ✅ **Granular Set APIs and replacing the destructive PUT** (§4.7, old §5.5) | **done in Phase 5** | Nested PUT now reconciles in place. |
-| **Frontend tracking UI** — duration/distance fields, optional weight, RPE/RIR, `set_type`, dropping the `weight` alias | **Phase 6** | Phase 3 was backend-scoped. The `weight` alias is a compatibility shim, not adaptation. |
+| ✅ **Frontend tracking UI** — duration/distance, optional `weight_kg`, drop `weight` alias | **done in Phase 6** | RPE/RIR and `set_type` remain backend-only (no UI). |
 | ✅ **Templates** | **done in Phase 4** | Separate Template domain + Session snapshot. |
 | **`PRAGMA foreign_keys=ON` at runtime** | still undecided (§5.12) | Left alone again. Not required for the `sets` rebuild. |
 
@@ -1376,7 +1400,7 @@ These are **not** oversights.
 |---|---|---|
 | ✅ **Granular Session/Set APIs and non-destructive PUT** (§4.7, old §5.5) | **done in Phase 5** | Stable child ids; granular WE/Set routes. |
 | ✅ **`started_at` / `ended_at` Session lifecycle** (§4.6) | **done in Phase 5** | Historical sentinels; Start is active. |
-| **Frontend template UI** — list/start/personalize/save-as-template, planned_* prefills, last-weight prefills | **Phase 6** | Phase 4 was backend-scoped. No `frontend/src/api/templates.js`. |
+| ✅ **Frontend template UI** — list/start/personalize/save-as-template, planned_* drafts, last-weight | **done in Phase 6** | `frontend/src/api/templates.js` + Templates tab. |
 | **Global template catalog / seeder** | later | Schema supports globals; zero rows after migration is valid. |
 | **`PRAGMA foreign_keys=ON` at runtime** | still undecided (§5.12) | Left alone again. Service-layer cleanup covers archive and Template delete. |
 
@@ -1386,7 +1410,7 @@ These are **not** oversights.
 
 | Deferred behavior | Where it belongs | Why it was left |
 |---|---|---|
-| **Frontend adaptation** — granular live editor, `started_at`/`ended_at` UI, drop `weight` alias, Template Start/save, tracking fields | **Phase 6** | Phase 5 only plumbed child ids through the existing editor. |
+| ✅ **Frontend adaptation** — granular live editor, Active/Completed, `weight_kg`, Template Start/save, tracking fields | **done in Phase 6** | PUT kept as unused fallback. |
 | **User timezone column / client-supplied `started_at`** | later | New Sessions use server UTC clocks and client/local `date`. No TZ field. |
 | **`PRAGMA foreign_keys=ON` at runtime** | still undecided (§5.12) | Left alone again. Not required for the `workouts` rebuild. |
 
@@ -1536,14 +1560,16 @@ Do not redo this work.
 Deliberately **not** done in Phase 5, still open: everything in **§5.5**, plus
 `PRAGMA foreign_keys=ON` (§5.12) and a test suite (§5.9).
 
-## The next task is: PHASE 6 — Frontend adaptation.
+## ✅ PHASE 6 — Frontend adaptation: **COMPLETED**
 
-Adapt the UI to the Phase 2–5 domain: tracking fields, personal exercises,
-Templates (list/start/personalize/save-as-template), granular Session/Set
-writes, `started_at`/`ended_at`, and drop the `weight` alias. Do not start
-Phase 7 (AI/voice) in the same change.
+Delivered: tracking-aware live Session editor, Templates UI, granular writes,
+`GET /exercises/last-weights`, tracking on `ExerciseRefOut`, `weight` alias
+retired. No migration. Full detail in **§2.14**. Do not redo this work.
 
-- **STOP after Phase 6.** Do not begin Phase 7 in the same change. Report results and wait.
+## The next task is: PHASE 7 — Stabilization & Tests.
+
+Do not start Phase 7 in this change. Phase 7 is tests and hardening, not AI or voice.
+Phase 8 is AI Readiness. Phase 9 is the Voice Assistant.
 
 ---
 
@@ -1559,8 +1585,10 @@ Phase 7 (AI/voice) in the same change.
 | **Phase 3** | Set / tracking domain (Set-side tracking validation, nullable `weight_kg` as DECIMAL(6,2), duration, distance, RPE, RIR, `set_type` — per §4.3/§4.4) — revision `88e993067758` (§2.11) | ✅ **COMPLETED** |
 | **Phase 4** | Templates (separate entity, global immutable + personal, start-template-creates-Session, save-Session-as-My-Template derivation — per §4.1/§4.2) — revision `68505223da63` (§2.12) | ✅ **COMPLETED** |
 | **Phase 5** | Granular Session/Set APIs (stable IDs, `POST /workout-exercises/{id}/sets`, `PATCH`/`DELETE /sets/{id}`, `order_index` normalization, `started_at`/`ended_at` — per §4.6/§4.7) — revision `0153e917bf85` (§2.13) | ✅ **COMPLETED** |
-| **Phase 6** | Frontend adaptation to the new domain and APIs | ← **NEXT** (§7) |
-| **Phase 7** | AI / voice layer (later) | not started |
+| **Phase 6** | Frontend adaptation to the new domain and APIs | ✅ **COMPLETED** (§2.14) |
+| **Phase 7** | Stabilization & Tests | ← **NEXT** |
+| **Phase 8** | AI Readiness | not started |
+| **Phase 9** | Voice Assistant | not started |
 
 Each phase should be a self-contained, reviewable change with its own migration(s). Do not run ahead.
 
@@ -1570,8 +1598,8 @@ Each phase should be a self-contained, reviewable change with its own migration(
 
 Explicitly out of scope until the corresponding phase is reached:
 
-- **No AI implementation.** No LLM calls, no AI-assisted logging, no suggestion engine (Phase 7).
-- **No voice implementation.** No speech-to-text, no voice logging UI (Phase 7).
+- **No AI implementation.** No LLM calls, no AI-assisted logging, no suggestion engine (Phase 8).
+- **No voice implementation.** No speech-to-text, no voice logging UI (Phase 9).
 - **No unnecessary metadata or taxonomy expansion.** Do not add equipment/movement-pattern/difficulty
   lookup tables, tag systems, or muscle-group taxonomies "while we're here" (§4.8).
 - **No exercise media implementation yet.** No images, no video, no thumbnails, no file uploads or
@@ -1653,7 +1681,7 @@ gym-tracker-app/
     └── src/
         ├── main.jsx / App.jsx
         ├── api/                 # axiosClient.js (envelope unwrap + 401 event), auth, exercises,
-        │                        #   workouts, sets.js (DEAD — endpoints do not exist)
+        │                        #   workouts, templates, sets.js (Phase 5 granular URLs)
         ├── context/             # AuthContext.jsx, ThemeContext.jsx
         ├── routes/              # AppRoutes.jsx, ProtectedRoute.jsx, PublicRoute.jsx
         ├── components/
@@ -1827,7 +1855,7 @@ stale the moment anything is committed. Describe state semantically — by phase
 id, by what was verified — so this document only changes when the *project state* changes, not when
 the repository does.
 
-**Last verified:** 2026-09-06, after Phase 5 (Granular Session/Set APIs) completed. Locked
-decisions in §4 were **not** touched by that update and remain exactly as originally agreed —
-§4.6 / §4.7 are now *implemented* (§2.13) rather than merely decided, apart from frontend
-adaptation (Phase 6).
+**Last verified:** 2026-09-06, after Phase 6 (Frontend adaptation) completed. Locked
+decisions in §4 were **not** touched by that update. Frontend now matches the
+Phase 2–5 domain. Next is Phase 7 — Stabilization & Tests. AI Readiness is
+Phase 8. Voice Assistant is Phase 9. Neither has started.

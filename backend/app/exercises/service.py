@@ -27,7 +27,7 @@ from app.exercises.models import (
 )
 from app.exercises.normalization import clean_display_name, normalize_name
 from app.exercises.schemas import ExerciseCreate, ExerciseUpdate
-from app.workouts.models import Set, WorkoutExercise
+from app.workouts.models import Set, Workout, WorkoutExercise
 
 
 # ---- Read ---------------------------------------------------------------
@@ -85,6 +85,51 @@ def selectable_exercise_ids(
         .all()
     )
     return {row[0] for row in rows}
+
+
+def last_weights(
+    db: Session,
+    user_id: int,
+    exercise_ids: list[int],
+    exclude_workout_id: Optional[int] = None,
+) -> list[tuple[int, Optional[object]]]:
+    """Latest non-null weight_kg per exercise from the caller's Sessions.
+
+    Unknown ids and exercises the caller has never loaded return None.
+    Another user's personal exercise is indistinguishable from "no history".
+    `weight_kg = 0` counts. Archived exercises still resolve through history.
+    """
+    unique_ids = list(dict.fromkeys(eid for eid in exercise_ids if eid > 0))
+    found: dict[int, object] = {}
+    if unique_ids:
+        query = (
+            db.query(
+                WorkoutExercise.exercise_id,
+                Set.weight_kg,
+                Workout.date,
+                Workout.id,
+                Set.order_index,
+            )
+            .join(Set, Set.workout_exercise_id == WorkoutExercise.id)
+            .join(Workout, Workout.id == WorkoutExercise.workout_id)
+            .filter(
+                Workout.user_id == user_id,
+                WorkoutExercise.exercise_id.in_(unique_ids),
+                Set.weight_kg.isnot(None),
+            )
+            .order_by(
+                WorkoutExercise.exercise_id.asc(),
+                Workout.date.desc(),
+                Workout.id.desc(),
+                Set.order_index.desc(),
+            )
+        )
+        if exclude_workout_id is not None:
+            query = query.filter(Workout.id != exclude_workout_id)
+        for exercise_id, weight_kg, *_rest in query.all():
+            if exercise_id not in found:
+                found[exercise_id] = weight_kg
+    return [(eid, found.get(eid)) for eid in unique_ids]
 
 
 def has_recorded_sets(db: Session, exercise_id: int) -> bool:

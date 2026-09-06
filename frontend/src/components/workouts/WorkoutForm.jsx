@@ -1,22 +1,15 @@
-// WorkoutForm - create/edit form shared by /workouts/new and /workouts/:id/edit.
-// Handles workout name + date, a field array of exercises (each with its own
-// nested field array of sets), validation via the shared zod workoutSchema, and
-// transforms form values into the backend payload before delegating to onSubmit.
+// Live Session editor. Draft set rows stay client-side until the primary
+// metric is recorded via granular Set APIs.
 
 import { useState } from 'react';
-import { useForm, useFieldArray } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { AlertCircle, Dumbbell, Plus } from 'lucide-react';
+import { AlertCircle, Check, Dumbbell, Plus } from 'lucide-react';
 
-import { workoutSchema } from '@/lib/validators.js';
 import AppInput from '@/components/ui/AppInput.jsx';
 import AppButton from '@/components/ui/AppButton.jsx';
 import ExerciseFieldCard from './ExerciseFieldCard.jsx';
 import ExercisePicker from './ExercisePicker.jsx';
+import { formatPlannedHint } from '@/lib/tracking.js';
 
-// Quick-pick presets for the workout name. Users can tap one or ignore them and
-// type any custom name -- these only prefill the free-text field.
-// TODO - Suggettions passed by the database..
 const NAME_SUGGESTIONS = [
   'Chest Day',
   'Leg Day',
@@ -27,88 +20,33 @@ const NAME_SUGGESTIONS = [
   'Calf Day',
   'Powerlifting Day',
   'Abs',
-  'Stretching'
+  'Stretching',
 ];
 
-// Map validated form values -> backend WorkoutCreate/WorkoutUpdate payload.
-// order_index is derived from array position; UI-only fields are dropped.
-function toPayload(values) {
-  return {
-    name: values.name.trim(),
-    date: values.date,
-    exercises: values.exercises.map((ex, exIndex) => ({
-      ...(ex.workout_exercise_id
-        ? { id: Number(ex.workout_exercise_id) }
-        : {}),
-      exercise_id: Number(ex.exercise_id),
-      order_index: exIndex,
-      sets: ex.sets.map((set, setIndex) => ({
-        ...(set.set_id ? { id: Number(set.set_id) } : {}),
-        reps: Number(set.reps),
-        weight: Number(set.weight),
-        order_index: setIndex,
-      })),
-    })),
-  };
-}
-
 export default function WorkoutForm({
-  defaultValues,
-  onSubmit,
-  onCancel,
-  submitLabel = 'Save workout',
+  name,
+  date,
+  onNameChange,
+  onDateChange,
+  onMetaBlur,
+  exercises = [],
+  onAddExercise,
+  onRemoveExercise,
+  onRowChange,
+  onRowCommit,
+  onRowRemove,
+  onAddRow,
+  onFinish,
+  onSaveAsTemplate,
+  isActive,
+  busy = false,
+  serverError,
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [serverError, setServerError] = useState(null);
   const [showNameSuggestions, setShowNameSuggestions] = useState(false);
 
-  const {
-    register,
-    control,
-    handleSubmit,
-    setValue,
-    formState: { errors, isSubmitting },
-  } = useForm({
-    resolver: zodResolver(workoutSchema),
-    defaultValues,
-  });
-
-  const nameField = register('name');
-
-  const applyNameSuggestion = (suggestion) => {
-    setValue('name', suggestion, { shouldValidate: true, shouldDirty: true });
-  };
-
-  const { fields, append, remove } = useFieldArray({
-    control,
-    name: 'exercises',
-  });
-
-  const selectedIds = fields.map((f) => Number(f.exercise_id));
-
-  const handlePick = (exercise) => {
-    append({
-      exercise_id: exercise.id,
-      name: exercise.name,
-      muscle_group: exercise.muscle_group,
-      sets: [{ reps: '', weight: '' }],
-    });
-  };
-
-  const submit = async (values) => {
-    setServerError(null);
-    try {
-      await onSubmit(toPayload(values));
-    } catch (err) {
-      setServerError(err?.message || 'Could not save the workout. Please try again.');
-    }
-  };
-
-  const exercisesError =
-    errors.exercises?.root?.message || errors.exercises?.message;
-
   return (
-    <form onSubmit={handleSubmit(submit)} noValidate className="flex flex-col gap-6">
+    <div className="flex flex-col gap-6">
       {serverError && (
         <div
           role="alert"
@@ -125,12 +63,12 @@ export default function WorkoutForm({
             label="Workout name"
             placeholder="e.g. Push Day"
             autoComplete="off"
-            error={errors.name?.message}
-            {...nameField}
+            value={name}
+            onChange={(e) => onNameChange(e.target.value)}
             onFocus={() => setShowNameSuggestions(true)}
             onBlur={(e) => {
-              nameField.onBlur(e);
               setShowNameSuggestions(false);
+              onMetaBlur?.(e);
             }}
           />
 
@@ -144,10 +82,8 @@ export default function WorkoutForm({
                 <button
                   key={suggestion}
                   type="button"
-                  // Prevent the input's blur from firing before the click so the
-                  // tap registers and focus (and the chip row) stays put.
                   onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => applyNameSuggestion(suggestion)}
+                  onClick={() => onNameChange(suggestion)}
                   className="shrink-0 whitespace-nowrap rounded-full border border-input bg-secondary px-3.5 py-2 text-sm font-medium text-secondary-foreground transition-colors hover:bg-accent active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   {suggestion}
@@ -160,8 +96,9 @@ export default function WorkoutForm({
         <AppInput
           label="Date"
           type="date"
-          error={errors.date?.message}
-          {...register('date')}
+          value={date}
+          onChange={(e) => onDateChange(e.target.value)}
+          onBlur={onMetaBlur}
         />
       </div>
 
@@ -170,42 +107,48 @@ export default function WorkoutForm({
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
             Exercises
           </h2>
-          <span className="text-xs text-muted-foreground">{fields.length}</span>
+          <span className="text-xs text-muted-foreground">{exercises.length}</span>
         </div>
 
-        {fields.length === 0 ? (
+        {exercises.length === 0 ? (
           <div className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-border bg-card/50 px-6 py-10 text-center">
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
               <Dumbbell className="h-6 w-6" aria-hidden="true" />
             </div>
             <p className="text-sm text-muted-foreground">
-              Add exercises and log your sets.
+              Add exercises. Planned rows stay local until you record a set.
             </p>
           </div>
         ) : (
           <div className="flex flex-col gap-3">
-            {fields.map((field, index) => (
+            {exercises.map((block) => (
               <ExerciseFieldCard
-                key={field.id}
-                control={control}
-                register={register}
-                exerciseIndex={index}
-                field={field}
-                errors={errors.exercises?.[index]}
-                onRemove={() => remove(index)}
+                key={block.workout_exercise_id}
+                exercise={block.exercise}
+                rows={block.rows}
+                plannedHint={formatPlannedHint(block)}
+                busy={busy}
+                onRowChange={(setIndex, patch) =>
+                  onRowChange(block.workout_exercise_id, setIndex, patch)
+                }
+                onRowCommit={(setIndex) =>
+                  onRowCommit(block.workout_exercise_id, setIndex)
+                }
+                onRowRemove={(setIndex) =>
+                  onRowRemove(block.workout_exercise_id, setIndex)
+                }
+                onAddRow={() => onAddRow(block.workout_exercise_id)}
+                onRemoveExercise={() => onRemoveExercise(block.workout_exercise_id)}
               />
             ))}
           </div>
-        )}
-
-        {exercisesError && (
-          <p className="text-sm font-medium text-destructive">{exercisesError}</p>
         )}
 
         <AppButton
           type="button"
           variant="outline"
           block
+          disabled={busy}
           onClick={() => setPickerOpen(true)}
         >
           <Plus className="h-4 w-4" aria-hidden="true" />
@@ -213,22 +156,31 @@ export default function WorkoutForm({
         </AppButton>
       </section>
 
-      <div className="flex flex-col gap-3 pt-2 sm:flex-row-reverse">
-        <AppButton type="submit" block size="lg" loading={isSubmitting}>
-          {isSubmitting ? 'Saving…' : submitLabel}
-        </AppButton>
-        <AppButton type="button" variant="ghost" block onClick={onCancel}>
-          Cancel
+      <div className="flex flex-col gap-3 pt-2">
+        {isActive && (
+          <AppButton type="button" block size="lg" disabled={busy} onClick={onFinish}>
+            <Check className="h-4 w-4" aria-hidden="true" />
+            Finish Workout
+          </AppButton>
+        )}
+        <AppButton
+          type="button"
+          variant="outline"
+          block
+          disabled={busy}
+          onClick={onSaveAsTemplate}
+        >
+          Save as My Template
         </AppButton>
       </div>
 
       {pickerOpen && (
         <ExercisePicker
-          onPick={handlePick}
+          onPick={onAddExercise}
           onClose={() => setPickerOpen(false)}
-          selectedIds={selectedIds}
+          selectedIds={exercises.map((block) => Number(block.exercise.id))}
         />
       )}
-    </form>
+    </div>
   );
 }

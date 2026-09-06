@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.exceptions import NotFoundError, ValidationError
 from app.core.utc import date_midnight_utc, utc_now
 from app.exercises import service as exercises_service
-from app.exercises.models import ExerciseTracking
+from app.exercises.models import Exercise, ExerciseTracking
 from app.workouts.models import Set, Workout, WorkoutExercise
 from app.workouts.schemas import (
     ReorderIn,
@@ -64,6 +64,22 @@ def list_workouts(db: Session, user_id: int) -> list[Workout]:
     )
 
 
+def _workout_detail_options():
+    return (
+        selectinload(Workout.exercises)
+        .selectinload(WorkoutExercise.exercise)
+        .selectinload(Exercise.tracking),
+        selectinload(Workout.exercises).selectinload(WorkoutExercise.sets),
+    )
+
+
+def _workout_exercise_options():
+    return (
+        selectinload(WorkoutExercise.exercise).selectinload(Exercise.tracking),
+        selectinload(WorkoutExercise.sets),
+    )
+
+
 def get_workout(db: Session, user_id: int, workout_id: int) -> Workout:
     """Load a workout with its full nested tree, scoped to `user_id`.
 
@@ -74,10 +90,7 @@ def get_workout(db: Session, user_id: int, workout_id: int) -> Workout:
     workout = (
         db.query(Workout)
         .execution_options(populate_existing=True)
-        .options(
-            selectinload(Workout.exercises).selectinload(WorkoutExercise.exercise),
-            selectinload(Workout.exercises).selectinload(WorkoutExercise.sets),
-        )
+        .options(*_workout_detail_options())
         .filter(Workout.id == workout_id, Workout.user_id == user_id)
         .first()
     )
@@ -94,10 +107,7 @@ def get_workout_exercise(
         db.query(WorkoutExercise)
         .execution_options(populate_existing=True)
         .join(Workout, Workout.id == WorkoutExercise.workout_id)
-        .options(
-            selectinload(WorkoutExercise.exercise),
-            selectinload(WorkoutExercise.sets),
-        )
+        .options(*_workout_exercise_options())
         .filter(
             WorkoutExercise.id == workout_exercise_id,
             Workout.user_id == user_id,

@@ -1,19 +1,36 @@
-// ExercisePicker - modal that lists the seeded exercise catalog, grouped by
-// muscle group, with a case-insensitive search. Picking an exercise calls
-// onPick(exercise) and closes the sheet.
-//
-// Mount this only while open (the parent conditionally renders it) so the
-// catalog fetch runs fresh each time it's opened.
+// ExercisePicker - catalog modal grouped by muscle group, plus personal create.
 
 import { useMemo, useState } from 'react';
 import { AlertCircle, Check, Loader2, Search } from 'lucide-react';
 import { listExercises } from '@/api/exercises.js';
 import useAsync from '@/hooks/useAsync.js';
 import Modal from '@/components/ui/Modal.jsx';
+import AppButton from '@/components/ui/AppButton.jsx';
+import CreateExerciseForm from './CreateExerciseForm.jsx';
 
-export default function ExercisePicker({ onPick, onClose, selectedIds = [] }) {
-  const { data: exercises, error, loading } = useAsync(listExercises, []);
+const TRACKING_LABEL = {
+  reps: 'Reps',
+  duration: 'Time',
+  distance: 'Distance',
+};
+
+export default function ExercisePicker({
+  onPick,
+  onClose,
+  selectedIds = [],
+  allowCreate = true,
+}) {
+  const { data: exercises, error, loading, setData } = useAsync(listExercises, []);
   const [query, setQuery] = useState('');
+  const [creating, setCreating] = useState(false);
+
+  const muscleGroups = useMemo(() => {
+    const names = new Set();
+    for (const ex of exercises || []) {
+      if (ex.muscle_group) names.add(ex.muscle_group);
+    }
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [exercises]);
 
   const groups = useMemo(() => {
     const list = exercises || [];
@@ -42,94 +59,121 @@ export default function ExercisePicker({ onPick, onClose, selectedIds = [] }) {
 
   const selected = new Set(selectedIds);
 
+  const handleCreated = (exercise) => {
+    setData((current) => [exercise, ...(current || [])]);
+    onPick?.(exercise);
+    onClose?.();
+  };
+
   return (
-    // Mobile: top-anchored sheet whose height tracks the results (capped at
-    // 75dvh, scrollable beyond that). The search bar keeps a fixed on-screen
-    // position while the sheet collapses bottom-up when a query narrows the
-    // list, so a single match yields a compact modal with no dead space --
-    // and stays visible above the Android keyboard.
-    // Desktop (sm+): unchanged fixed-height centered card.
     <Modal
       open
-      title="Add exercise"
+      title={creating ? 'New personal exercise' : 'Add exercise'}
       onClose={onClose}
       anchor="top"
       className="max-h-[75dvh] sm:h-[85dvh] sm:max-h-[85dvh]"
     >
-      <div className="flex min-h-full flex-col">
-        <div className="sticky top-0 z-10 border-b border-border bg-card p-4">
-          <div className="relative">
-            <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-muted-foreground">
-              <Search className="h-4 w-4" aria-hidden="true" />
-            </span>
-            <input
-              type="search"
-              autoFocus
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search exercises…"
-              aria-label="Search exercises"
-              className="h-12 w-full rounded-lg border border-input bg-background pl-10 pr-3.5 text-base text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-            />
+      {creating ? (
+        <CreateExerciseForm
+          muscleGroups={muscleGroups}
+          onCreated={handleCreated}
+          onCancel={() => setCreating(false)}
+        />
+      ) : (
+        <div className="flex min-h-full flex-col">
+          <div className="sticky top-0 z-10 border-b border-border bg-card p-4">
+            <div className="relative">
+              <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-muted-foreground">
+                <Search className="h-4 w-4" aria-hidden="true" />
+              </span>
+              <input
+                type="search"
+                autoFocus
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search exercises…"
+                aria-label="Search exercises"
+                className="h-12 w-full rounded-lg border border-input bg-background pl-10 pr-3.5 text-base text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+              />
+            </div>
           </div>
-        </div>
 
-        <div className="p-4">
-          {loading ? (
-            <div className="flex items-center justify-center gap-2 py-10 text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-              <span className="text-sm">Loading exercises…</span>
-            </div>
-          ) : error ? (
-            <div
-              role="alert"
-              className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3.5 py-3 text-sm text-destructive"
-            >
-              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-              <span>{error}</span>
-            </div>
-          ) : groups.length === 0 ? (
-            <p className="py-10 text-center text-sm text-muted-foreground">
-              No exercises match “{query}”.
-            </p>
-          ) : (
-            <div className="flex flex-col gap-5">
-              {groups.map(([group, items]) => (
-                <div key={group} className="flex flex-col gap-1.5">
-                  <p className="px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    {group}
-                  </p>
-                  <ul className="flex flex-col gap-1">
-                    {items.map((ex) => {
-                      const isSelected = selected.has(ex.id);
-                      return (
-                        <li key={ex.id}>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              onPick?.(ex);
-                              onClose?.();
-                            }}
-                            className="flex w-full items-center justify-between gap-2 rounded-lg border border-transparent px-3 py-3 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                          >
-                            <span className="font-medium">{ex.name}</span>
-                            {isSelected && (
-                              <span className="flex items-center gap-1 text-xs font-medium text-primary">
-                                <Check className="h-3.5 w-3.5" aria-hidden="true" />
-                                Added
+          <div className="p-4">
+            {loading ? (
+              <div className="flex items-center justify-center gap-2 py-10 text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                <span className="text-sm">Loading exercises…</span>
+              </div>
+            ) : error ? (
+              <div
+                role="alert"
+                className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3.5 py-3 text-sm text-destructive"
+              >
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                <span>{error}</span>
+              </div>
+            ) : groups.length === 0 ? (
+              <p className="py-10 text-center text-sm text-muted-foreground">
+                No exercises match “{query}”.
+              </p>
+            ) : (
+              <div className="flex flex-col gap-5">
+                {groups.map(([group, items]) => (
+                  <div key={group} className="flex flex-col gap-1.5">
+                    <p className="px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      {group}
+                    </p>
+                    <ul className="flex flex-col gap-1">
+                      {items.map((ex) => {
+                        const isSelected = selected.has(ex.id);
+                        return (
+                          <li key={ex.id}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onPick?.(ex);
+                                onClose?.();
+                              }}
+                              className="flex w-full items-center justify-between gap-2 rounded-lg border border-transparent px-3 py-3 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            >
+                              <span className="min-w-0">
+                                <span className="block font-medium">{ex.name}</span>
+                                <span className="text-xs text-muted-foreground">
+                                  {TRACKING_LABEL[ex.primary_tracking_type] || 'Reps'}
+                                  {ex.is_global ? '' : ' · Mine'}
+                                </span>
                               </span>
-                            )}
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-              ))}
+                              {isSelected && (
+                                <span className="flex items-center gap-1 text-xs font-medium text-primary">
+                                  <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                                  Added
+                                </span>
+                              )}
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {allowCreate && (
+            <div className="sticky bottom-0 border-t border-border bg-card p-4">
+              <AppButton
+                type="button"
+                variant="outline"
+                block
+                onClick={() => setCreating(true)}
+              >
+                Create personal exercise
+              </AppButton>
             </div>
           )}
         </div>
-      </div>
+      )}
     </Modal>
   );
 }

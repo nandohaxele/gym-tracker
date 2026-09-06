@@ -14,6 +14,7 @@ from sqlalchemy.orm import Query, Session, selectinload
 
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.exercises import service as exercises_service
+from app.exercises.models import Exercise
 from app.exercises.normalization import clean_display_name, normalize_name
 from app.templates.models import Template, TemplateExercise
 from app.templates.schemas import (
@@ -44,7 +45,9 @@ def _visible(db: Session, user_id: int) -> Query:
 
 def _detail_options():
     return (
-        selectinload(Template.exercises).selectinload(TemplateExercise.exercise),
+        selectinload(Template.exercises)
+        .selectinload(TemplateExercise.exercise)
+        .selectinload(Exercise.tracking),
     )
 
 
