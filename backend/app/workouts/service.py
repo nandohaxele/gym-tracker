@@ -64,6 +64,20 @@ def list_workouts(db: Session, user_id: int) -> list[Workout]:
     )
 
 
+def list_active_workouts(db: Session, user_id: int) -> list[Workout]:
+    """Return the caller's active Sessions (`ended_at IS NULL`).
+
+    Order matches `list_workouts`. Callers must not treat order as a
+    selection heuristic when more than one row is returned.
+    """
+    return (
+        db.query(Workout)
+        .filter(Workout.user_id == user_id, Workout.ended_at.is_(None))
+        .order_by(Workout.date.desc(), Workout.created_at.desc())
+        .all()
+    )
+
+
 def _workout_detail_options():
     return (
         selectinload(Workout.exercises)

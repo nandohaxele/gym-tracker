@@ -6,7 +6,9 @@ Visibility: a caller sees global templates (`user_id IS NULL`) plus its own
 personal ones, and never another user's. Cross-user access is NotFoundError.
 """
 
+from dataclasses import dataclass, field
 from datetime import date as _date
+from enum import Enum
 from typing import Optional
 
 from sqlalchemy import or_
@@ -57,6 +59,125 @@ def list_templates(db: Session, user_id: int) -> list[Template]:
         _visible(db, user_id)
         .order_by(Template.name_normalized.asc(), Template.id.asc())
         .all()
+    )
+
+
+class TemplateResolutionLevel(str, Enum):
+    """Where a template name match was found."""
+
+    personal = "personal"
+    global_ = "global"
+
+
+class TemplateResolveScope(str, Enum):
+    """Optional scope restriction for template resolution."""
+
+    any = "any"
+    personal = "personal"
+    global_ = "global"
+
+
+@dataclass(frozen=True)
+class TemplateResolution:
+    """Exact-name template resolution outcome."""
+
+    query: str
+    normalized: str
+    scope: str
+    level: Optional[TemplateResolutionLevel] = None
+    template: Optional[Template] = None
+    candidates: list[Template] = field(default_factory=list)
+
+    @property
+    def resolved(self) -> bool:
+        return self.template is not None
+
+    @property
+    def ambiguous(self) -> bool:
+        return self.level is not None and self.template is None
+
+    @property
+    def status(self) -> str:
+        if self.resolved:
+            return "resolved"
+        if self.ambiguous:
+            return "ambiguous"
+        return "not_found"
+
+
+def _unique_templates(rows: list[Template]) -> list[Template]:
+    unique: dict[int, Template] = {}
+    for row in rows:
+        unique.setdefault(row.id, row)
+    return list(unique.values())
+
+
+def resolve_template(
+    db: Session,
+    user_id: int,
+    text: str,
+    scope: Optional[str] = None,
+) -> TemplateResolution:
+    """Resolve an exact normalized template name.
+
+    `scope` is `any` (default), `personal`, or `global`. For `any`, personal
+    exact name wins over global exact name. No synonyms, no fuzzy match.
+    """
+    normalized = normalize_name(text)
+    if not normalized:
+        raise ValidationError("Search text must contain at least one character")
+
+    raw_scope = scope.strip() if scope and scope.strip() else "any"
+    try:
+        resolved_scope = TemplateResolveScope(raw_scope)
+    except ValueError:
+        raise ValidationError("scope must be any, personal, or global") from None
+
+    def by_personal() -> list[Template]:
+        return _unique_templates(
+            _visible(db, user_id)
+            .filter(
+                Template.user_id == user_id,
+                Template.name_normalized == normalized,
+            )
+            .all()
+        )
+
+    def by_global() -> list[Template]:
+        return _unique_templates(
+            _visible(db, user_id)
+            .filter(
+                Template.user_id.is_(None),
+                Template.name_normalized == normalized,
+            )
+            .all()
+        )
+
+    if resolved_scope is TemplateResolveScope.personal:
+        levels = ((TemplateResolutionLevel.personal, by_personal),)
+    elif resolved_scope is TemplateResolveScope.global_:
+        levels = ((TemplateResolutionLevel.global_, by_global),)
+    else:
+        levels = (
+            (TemplateResolutionLevel.personal, by_personal),
+            (TemplateResolutionLevel.global_, by_global),
+        )
+
+    for level, find in levels:
+        matches = find()
+        if not matches:
+            continue
+        return TemplateResolution(
+            query=text,
+            normalized=normalized,
+            scope=resolved_scope.value,
+            level=level,
+            template=matches[0] if len(matches) == 1 else None,
+            candidates=matches,
+        )
+
+    return TemplateResolution(
+        query=text, normalized=normalized, scope=resolved_scope.value
     )
 
 

@@ -3,6 +3,7 @@
 Endpoints (mounted under /api/exercises by main.py, all auth required):
     GET    /exercises                        global + own active exercises
     GET    /exercises/last-weights           latest load per exercise id
+    POST   /exercises/resolve                exact name/synonym resolution
     POST   /exercises                        create a personal exercise
     PATCH  /exercises/{exercise_id}          update a personal exercise
     POST   /exercises/{exercise_id}/archive  soft-archive a personal exercise
@@ -26,6 +27,8 @@ from app.exercises import service
 from app.exercises.schemas import (
     ExerciseCreate,
     ExerciseOut,
+    ExerciseResolveIn,
+    ExerciseResolveOut,
     ExerciseUpdate,
     LastWeightOut,
 )
@@ -70,6 +73,37 @@ def last_weights(
             LastWeightOut(exercise_id=exercise_id, weight_kg=weight_kg)
             for exercise_id, weight_kg in rows
         ]
+    )
+
+
+@router.post("/resolve")
+def resolve_exercise(
+    payload: ExerciseResolveIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Resolve exact normalized name/synonym to a visible active exercise."""
+    result = service.resolve_exercise(
+        db, current_user.id, payload.query, locale=payload.locale
+    )
+    exercise = (
+        ExerciseOut.model_validate(result.exercise) if result.exercise is not None else None
+    )
+    candidates = (
+        [ExerciseOut.model_validate(item) for item in result.candidates]
+        if result.ambiguous
+        else []
+    )
+    return ok(
+        ExerciseResolveOut(
+            status=result.status,
+            query=result.query,
+            normalized=result.normalized,
+            locale=result.locale,
+            level=result.level.value if result.level is not None else None,
+            exercise=exercise,
+            candidates=candidates,
+        )
     )
 
 

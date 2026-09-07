@@ -5,9 +5,9 @@ Min/max pairs are all-or-nothing: both null, or both present with min <= max.
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.workouts.schemas import ExerciseRefOut
 
@@ -128,3 +128,32 @@ class TemplateDetail(BaseModel):
     is_global: bool
     created_at: datetime
     exercises: list[TemplateExerciseOut] = Field(default_factory=list)
+
+
+class TemplateResolveIn(BaseModel):
+    """Exact normalized template-name resolution."""
+
+    model_config = _INPUT_CONFIG
+
+    query: str = Field(min_length=1, max_length=120)
+    scope: Optional[Literal["any", "personal", "global"]] = None
+
+    @field_validator("scope")
+    @classmethod
+    def _blank_scope(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+
+class TemplateResolveOut(BaseModel):
+    """Machine-readable template resolver outcome. HTTP 200 for all statuses."""
+
+    status: Literal["resolved", "ambiguous", "not_found"]
+    query: str
+    normalized: str
+    scope: Literal["any", "personal", "global"]
+    level: Optional[Literal["personal", "global"]] = None
+    template: Optional[TemplateSummary] = None
+    candidates: list[TemplateSummary] = Field(default_factory=list)

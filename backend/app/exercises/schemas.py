@@ -10,9 +10,9 @@ can reproduce them from `name` if they ever need to.
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Optional
+from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 
 from app.exercises.models import TrackingType
 
@@ -61,11 +61,47 @@ class LastWeightOut(BaseModel):
         return None if value is None else float(value)
 
 
+class ExerciseResolveOut(BaseModel):
+    """Machine-readable resolver outcome. Always returned under HTTP 200."""
+
+    status: Literal["resolved", "ambiguous", "not_found"]
+    query: str
+    normalized: str
+    locale: Optional[str] = None
+    level: Optional[
+        Literal[
+            "personal_name",
+            "personal_synonym",
+            "global_name",
+            "global_synonym",
+        ]
+    ] = None
+    exercise: Optional[ExerciseOut] = None
+    candidates: list[ExerciseOut] = Field(default_factory=list)
+
+
 # ---- Input ---------------------------------------------------------------
 
 # Trimming inputs here keeps `name` presentable; the separate `name_normalized`
 # column is what uniqueness and resolution actually compare.
 _INPUT_CONFIG = ConfigDict(str_strip_whitespace=True)
+
+
+class ExerciseResolveIn(BaseModel):
+    """Free-text exercise resolution. Exact normalized name/synonym only."""
+
+    model_config = _INPUT_CONFIG
+
+    query: str = Field(min_length=1, max_length=120)
+    locale: Optional[str] = Field(default=None, max_length=10)
+
+    @field_validator("locale")
+    @classmethod
+    def _blank_locale(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
 
 
 def _reject_bad_tracking_shape(

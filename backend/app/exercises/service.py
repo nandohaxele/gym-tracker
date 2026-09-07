@@ -169,6 +169,7 @@ class ExerciseResolution:
 
     query: str
     normalized: str
+    locale: Optional[str] = None
     level: Optional[ResolutionLevel] = None
     exercise: Optional[Exercise] = None
     candidates: list[Exercise] = field(default_factory=list)
@@ -181,40 +182,79 @@ class ExerciseResolution:
     def ambiguous(self) -> bool:
         return self.level is not None and self.exercise is None
 
+    @property
+    def status(self) -> str:
+        if self.resolved:
+            return "resolved"
+        if self.ambiguous:
+            return "ambiguous"
+        return "not_found"
 
-def resolve_exercise(db: Session, user_id: int, text: str) -> ExerciseResolution:
+
+def _unique_exercises(rows: list[Exercise]) -> list[Exercise]:
+    """Deduplicate by Exercise.id, preserving first-seen order.
+
+    A synonym join can produce several rows for one Exercise (multiple
+    locales or synonym rows). Ambiguity is multiple *exercises*, not
+    multiple matching synonym rows.
+    """
+    unique: dict[int, Exercise] = {}
+    for row in rows:
+        unique.setdefault(row.id, row)
+    return list(unique.values())
+
+
+def resolve_exercise(
+    db: Session,
+    user_id: int,
+    text: str,
+    locale: Optional[str] = None,
+) -> ExerciseResolution:
     """Resolve free text to a single exercise, personal scope winning over global.
 
     Priority is strict: personal name, personal synonym, global name, global
     synonym. The first level with any match decides the outcome -- if that level
-    holds several candidates the result is reported as ambiguous rather than
-    picking one arbitrarily, and lower levels are not consulted.
+    holds several distinct exercises the result is reported as ambiguous rather
+    than picking one arbitrarily, and lower levels are not consulted.
 
     Only active exercises participate: an archived personal exercise must not
     shadow the global one whose name it may reuse.
+
+    `locale` is optional. Omitted/blank keeps synonym matching across all
+    locales. When set, synonym levels match only that locale; exact *name*
+    matching stays locale-independent.
     """
     normalized = normalize_name(text)
     if not normalized:
         raise ValidationError("Search text must contain at least one character")
 
-    active = _visible(db, user_id).filter(Exercise.is_active.is_(True))
+    locale_filter = locale.strip() if locale and locale.strip() else None
+
+    def active_query() -> Query:
+        # Fresh query each call: Query.join() mutates in place, so a shared
+        # query would leak the synonym join into later name levels.
+        return _visible(db, user_id).filter(Exercise.is_active.is_(True))
 
     def by_name(personal: bool) -> list[Exercise]:
         scope = (
             Exercise.user_id == user_id if personal else Exercise.user_id.is_(None)
         )
-        return active.filter(scope, Exercise.name_normalized == normalized).all()
+        return _unique_exercises(
+            active_query().filter(scope, Exercise.name_normalized == normalized).all()
+        )
 
     def by_synonym(personal: bool) -> list[Exercise]:
         scope = (
             Exercise.user_id == user_id if personal else Exercise.user_id.is_(None)
         )
-        return (
-            active.join(ExerciseSynonym, ExerciseSynonym.exercise_id == Exercise.id)
+        query = (
+            active_query()
+            .join(ExerciseSynonym, ExerciseSynonym.exercise_id == Exercise.id)
             .filter(scope, ExerciseSynonym.synonym_normalized == normalized)
-            .distinct()
-            .all()
         )
+        if locale_filter is not None:
+            query = query.filter(ExerciseSynonym.locale == locale_filter)
+        return _unique_exercises(query.all())
 
     levels = (
         (ResolutionLevel.personal_name, lambda: by_name(personal=True)),
@@ -230,12 +270,15 @@ def resolve_exercise(db: Session, user_id: int, text: str) -> ExerciseResolution
         return ExerciseResolution(
             query=text,
             normalized=normalized,
+            locale=locale_filter,
             level=level,
             exercise=matches[0] if len(matches) == 1 else None,
             candidates=matches,
         )
 
-    return ExerciseResolution(query=text, normalized=normalized)
+    return ExerciseResolution(
+        query=text, normalized=normalized, locale=locale_filter
+    )
 
 
 # ---- Write helpers -------------------------------------------------------

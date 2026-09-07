@@ -7,6 +7,7 @@ someone else's WorkoutExercise or Set.
 
 Endpoints (mounted under /api by main.py):
     GET    /workouts
+    GET    /workouts/active
     POST   /workouts
     GET    /workouts/{workout_id}
     PUT    /workouts/{workout_id}
@@ -60,6 +61,16 @@ def list_workouts(
     TODO (future): accept `?limit=&offset=` query params once histories grow.
     """
     items = service.list_workouts(db, current_user.id)
+    return ok([WorkoutSummary.model_validate(w) for w in items])
+
+
+@router.get("/workouts/active")
+def list_active_workouts(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """List the caller's active Sessions. Always a list; never auto-selects."""
+    items = service.list_active_workouts(db, current_user.id)
     return ok([WorkoutSummary.model_validate(w) for w in items])
 
 

@@ -13,12 +13,13 @@
 > **Phase 4 — Templates: COMPLETED** (§2.12) ·
 > **Phase 5 — Granular Session/Set APIs: COMPLETED** (§2.13) ·
 > **Phase 6 — Frontend adaptation: COMPLETED** (§2.14) ·
-> **Phase 7 — Stabilization & Tests: COMPLETED** (§2.15).
+> **Phase 7 — Stabilization & Tests: COMPLETED** (§2.15) ·
+> **Phase 8 — AI Readiness: COMPLETED** (§2.16).
 > Alembic owns schema evolution: baseline **`f3f47238398b`**, head **`0153e917bf85`**.
-> No Phase 6/7 migration. Runtime SQLite `PRAGMA foreign_keys=ON` is enabled
+> No Phase 6/7/8 migration. Runtime SQLite `PRAGMA foreign_keys=ON` is enabled
 > in `app/core/database.py` (`make_engine`); Alembic stays FK-off.
 > Backend pytest + frontend Vitest + `npm run build` are the gates.
-> **Next task: Phase 8 — AI Readiness** (§7). Do not start it here.
+> **Next task: Phase 9 — Voice Assistant** (§7). Do not start it here.
 >
 > This document deliberately records **no commit hash**. Git is the source of truth for revision
 > history — run `git log`/`git status` if you need it. Describe state semantically here so this file
@@ -157,9 +158,11 @@ behavioral summary.
   The old globally-unique raw-name index is gone.
 - **Synonyms** (`exercise_synonyms`) with the same normalization. A personal synonym may reuse a
   global synonym's text.
-- **Resolver** (`service.resolve_exercise`, service-layer only, **no HTTP endpoint yet**): personal
-  exact name → personal synonym → global exact name → global synonym. Several candidates at the same
-  level return an *ambiguous* result rather than an arbitrary pick.
+- **Resolver** (`service.resolve_exercise` + **`POST /api/exercises/resolve`**): personal
+  exact name → personal synonym → global exact name → global synonym. Several *distinct*
+  Exercises at the same level return `ambiguous` rather than an arbitrary pick. Optional
+  `locale` filters synonym levels only. Exact match only — no fuzzy/substring. HTTP 200
+  for `resolved` / `ambiguous` / `not_found` (§2.16).
 - **Tracking freeze.** Personal tracking is editable until the exercise has at least one persisted
   Set (via `Exercise → WorkoutExercise → Set`); afterwards a tracking *change* is rejected while name
   and metadata stay editable. Re-sending an unchanged tracking configuration is not a change.
@@ -171,9 +174,9 @@ behavioral summary.
   Core 3, Shoulders 3) with 23 tracking rows and 26 seeded synonyms.
 
 **NOT implemented:** equipment, movement pattern, exercise type, difficulty, multiple muscle groups,
-media/images, restore endpoint, exercise search/filter endpoints, an HTTP resolver endpoint, locale
-handling beyond storing `locale` (everything is seeded as `en` and resolution ignores it), and any
-exercise UI beyond the compatibility guard in §2.10.
+media/images, restore endpoint, exercise search/filter endpoints, fuzzy name search, and any
+exercise UI beyond the compatibility guard in §2.10. Locale is stored and now optionally honored
+by the resolver; seeded synonyms remain `en`.
 
 ## 2.3 Workouts / Sessions — IMPLEMENTED AS THE PERFORMED SESSION
 
@@ -317,10 +320,12 @@ POST   /api/auth/login
 GET    /api/auth/me
 GET    /api/exercises
 GET    /api/exercises/last-weights
+POST   /api/exercises/resolve
 POST   /api/exercises
 PATCH  /api/exercises/{exercise_id}
 POST   /api/exercises/{exercise_id}/archive
 GET    /api/workouts
+GET    /api/workouts/active
 POST   /api/workouts
 GET    /api/workouts/{workout_id}
 PUT    /api/workouts/{workout_id}
@@ -337,6 +342,7 @@ PATCH  /api/sets/{set_id}
 DELETE /api/sets/{set_id}
 GET    /api/templates
 POST   /api/templates
+POST   /api/templates/resolve
 GET    /api/templates/{template_id}
 PATCH  /api/templates/{template_id}
 DELETE /api/templates/{template_id}
@@ -802,6 +808,78 @@ No migration. Head remains `0153e917bf85`.
 - `datetime.utcnow()` model defaults replaced with `utc_now_naive` /
   `date.today()` (no schema/data migration).
 - Live `gym.db` was not mutated by fixtures. Workout 10 and set 38 untouched.
+
+## 2.16 AI Readiness — IMPLEMENTED (Phase 8, COMPLETED)
+
+No migration. Head remains `0153e917bf85`. No frontend. No LLM, voice, STT, or
+provider SDK. Live `gym.db` was not written.
+
+### Exercise resolve HTTP
+
+`POST /api/exercises/resolve` (authenticated). Body: `{ "query": str, "locale"?: str }`.
+Empty/whitespace query is 422. Outcomes are **HTTP 200** inside the standard envelope:
+
+| `data.status` | `exercise` | `candidates` |
+|---|---|---|
+| `resolved` | `ExerciseOut` | `[]` |
+| `ambiguous` | `null` | unique visible `ExerciseOut`s |
+| `not_found` | `null` | `[]` |
+
+Also returns `query`, `normalized`, `locale`, and `level`
+(`personal_name` / `personal_synonym` / `global_name` / `global_synonym` / `null`).
+Does not expose `user_id` or `name_normalized`. Another user's personal row never
+appears as a hit or candidate (that is `not_found`, not a 404).
+
+**Exact match only.** `"press"` does not resolve to Bench Press. Normalization is
+still trim + lowercase + collapse whitespace. Priority is unchanged. Same-level
+ambiguity is multiple *distinct* Exercises, not multiple synonym rows for one
+Exercise.
+
+**Locale:** omitted → synonym levels search all locales (previous behavior).
+Provided → synonym levels filter `ExerciseSynonym.locale`; exact **name** matches
+stay locale-independent.
+
+The shared SQLAlchemy query used by synonym lookup is built fresh each level.
+`Query.join()` mutates in place; reusing one query would leak the synonym join
+into later name levels.
+
+### Template resolve
+
+`resolve_template` + `POST /api/templates/resolve` (declared before `/{template_id}`).
+Exact normalized name only. Optional `scope`: `any` (default) / `personal` / `global`.
+`any` is personal exact, then global exact — personal `"Push"` wins over global
+`"Push"`. Same-level multiples → `ambiguous`. HTTP 200 for all three statuses.
+`TemplateSummary` only.
+
+### Active Sessions
+
+`GET /api/workouts/active` (declared before `/{workout_id}`). Always a list of
+`WorkoutSummary` for `ended_at IS NULL` owned by the caller. 0 / 1 / many are all
+valid. The HTTP layer never auto-selects. Completed and foreign Sessions are absent.
+`GET /api/workouts/{id}` remains the canonical detailed context read.
+
+### Internal commands (`app/commands/`)
+
+Vendor-neutral Pydantic commands + `execute_command(db, user_id, command)`.
+`user_id` is never a command field. The executor calls existing services only
+(no raw ORM writes, no FastAPI, no AI-specific write routes).
+
+| Command | Behavior |
+|---|---|
+| `CreateSessionCommand` | `create_workout` with no Sets (active) |
+| `AddExerciseCommand` | resolve Exercise → `add_workout_exercise` |
+| `RecordSetCommand` | unique WE target → `add_set` (primary tracking stays in the Set service) |
+| `FinishSessionCommand` | `complete_workout`; omitted id uses 0/1/many active semantics |
+| `StartTemplateCommand` | id or exact query → `start_template` (snapshot, zero Sets) |
+
+Internal result: `executed` / `needs_clarification` / `error` with `reason`,
+`message`, `data`, `candidates`. Not the global HTTP envelope. Ambiguity never
+guesses (latest Session, last Exercise, etc.).
+
+### Tests
+
+New: `test_exercise_resolve.py`, `test_template_resolve.py`,
+`test_active_sessions.py`, `test_commands.py`. Isolated temp SQLite only.
 
 ---
 
@@ -1321,8 +1399,9 @@ All storage uses canonical units. Any unit conversion is a presentation concern.
     `face-pull`, `front-squat`, `hanging-leg-raise` and `leg-press` have none. Aliases that name a
     *different* movement were deliberately excluded ("Chin Up" for a pull-up, "Hanging Knee Raise"
     for a hanging leg raise, "Bicep Curl" for either curl variant). Expect to curate this.
-19. **`exercise_synonyms.locale` is stored but not used.** Everything is seeded as `en` and the
-    resolver matches across all locales. It exists so adding real i18n later is not a migration.
+19. **`exercise_synonyms.locale` is optional on resolve.** Seeded synonyms remain `en`. Omitting
+    `locale` still matches every locale; a provided locale filters synonym levels only. Exact
+    names stay locale-independent. Full i18n / extra locale catalogs are still later work.
 20. ✅ **Resolved by Phase 6.** `SetIn` / `SetPatch` / `SetOut` use `weight_kg` only.
     The frontend no longer reads or writes `weight`.
 21. **Historical plank set id 38 has no `duration_seconds`.** It was recorded under the old
@@ -1332,7 +1411,7 @@ All storage uses canonical units. Any unit conversion is a presentation concern.
     workout 5 as a template derives `target_reps 200–200` and NULL duration — that is correct.
 22. **Legacy ID-less PUT is remaining compatibility debt.** The live editor does not
     call PUT. Tests cover ID-bearing preserve and ambiguous ID-less reject. Do not
-    remove the backend route in Phase 8.
+    remove the backend route.
 23. **Historical `started_at` / `ended_at` are date-midnight UTC sentinels**, not real gym
     clocks. Workout 9 is the proof case: `date=2026-07-02`, `created_at=2026-07-03 07:00:55`.
     Do not later "fix" those timestamps from `created_at`. New Sessions get real `now(UTC)`.
@@ -1373,7 +1452,7 @@ These are **not** oversights. Each is a locked decision whose prerequisite does 
 | ✅ **"Archiving a personal exercise removes it from future personal templates"** (§4.5) | **done in Phase 4** | `archive_personal_exercise` deletes the owner's personal `TemplateExercise` rows for that id. Sessions are not rewritten. |
 | **Full frontend adaptation** — tracking UI, personal-exercise UI, archived/restore views, `ExercisePicker` redesign | **Phase 6 — Frontend adaptation** | Phase 2 was backend-scoped. The single one-line null-safety guard in `ExercisePicker.jsx` (§2.10) is a compatibility fix, not adaptation. |
 | **`PRAGMA foreign_keys=ON` at runtime** | still undecided (§5.12) | A runtime behavior change, not infrastructure. Phase 2 confirmed again that it is not needed for safe migrations and left it alone. |
-| **HTTP resolver endpoint** | whenever a consumer needs it (likely Phase 8) | `service.resolve_exercise` is fully implemented and tested, but nothing calls it over HTTP yet, and inventing an endpoint shape without a consumer would be speculative. AI readiness (Phase 8) is its obvious first user. |
+| ✅ **HTTP resolver endpoint** | **done in Phase 8** | `POST /api/exercises/resolve` plus Template resolve, active Sessions, and an internal command executor (§2.16). |
 | **Restore-from-archive** | not scheduled | §4.5 says "no archived/restore UI for now". No API either, so nothing has to be un-built later. The archived row keeps its normalized name precisely so a restore stays possible (§3). |
 
 ## 5.3 Deliberately deferred by Phase 3
@@ -1567,10 +1646,18 @@ suite, `npm run build` gate, GitHub CI, runtime `PRAGMA foreign_keys=ON` on
 app connections only, small UI hardening, dead-code cleanup. No migration, no
 AI, no voice. Full detail in **§2.15**. Do not redo this work.
 
-## The next task is: PHASE 8 — AI Readiness.
+## ✅ PHASE 8 — AI Readiness: **COMPLETED**
 
-Do not start Phase 8 in this change. Phase 8 is the HTTP resolver consumer and
-AI-oriented contracts. Phase 9 is the Voice Assistant.
+Delivered: `POST /api/exercises/resolve` (exact match, optional locale,
+ambiguity, no leaks), `POST /api/templates/resolve`, `GET /api/workouts/active`,
+internal `app/commands` executor that calls existing services only. No
+migration, no LLM/provider, no voice, no frontend. Full detail in **§2.16**.
+Do not redo this work.
+
+## The next task is: PHASE 9 — Voice Assistant.
+
+Do not start Phase 9 in this change. Phase 9 is speech-to-text / voice UX and
+(only then) natural-language mapping onto these primitives.
 
 ---
 
@@ -1588,8 +1675,8 @@ AI-oriented contracts. Phase 9 is the Voice Assistant.
 | **Phase 5** | Granular Session/Set APIs (stable IDs, `POST /workout-exercises/{id}/sets`, `PATCH`/`DELETE /sets/{id}`, `order_index` normalization, `started_at`/`ended_at` — per §4.6/§4.7) — revision `0153e917bf85` (§2.13) | ✅ **COMPLETED** |
 | **Phase 6** | Frontend adaptation to the new domain and APIs | ✅ **COMPLETED** (§2.14) |
 | **Phase 7** | Stabilization & Tests | ✅ **COMPLETED** (§2.15) |
-| **Phase 8** | AI Readiness | ← **NEXT** |
-| **Phase 9** | Voice Assistant | not started |
+| **Phase 8** | AI Readiness | ✅ **COMPLETED** (§2.16) |
+| **Phase 9** | Voice Assistant | ← **NEXT** |
 
 Each phase should be a self-contained, reviewable change with its own migration(s). Do not run ahead.
 
@@ -1599,7 +1686,9 @@ Each phase should be a self-contained, reviewable change with its own migration(
 
 Explicitly out of scope until the corresponding phase is reached:
 
-- **No AI implementation.** No LLM calls, no AI-assisted logging, no suggestion engine (Phase 8).
+- **No LLM / provider integration.** Phase 8 added deterministic resolvers and
+  commands only. Do not add OpenAI/Anthropic/Gemini SDKs, LangChain/LangGraph,
+  prompts, or API keys until a later explicit instruction (Phase 9 or after).
 - **No voice implementation.** No speech-to-text, no voice logging UI (Phase 9).
 - **No unnecessary metadata or taxonomy expansion.** Do not add equipment/movement-pattern/difficulty
   lookup tables, tag systems, or muscle-group taxonomies "while we're here" (§4.8).
@@ -1610,7 +1699,7 @@ Explicitly out of scope until the corresponding phase is reached:
   (§6, §5.13).
 - **No Alembic `PRAGMA foreign_keys=ON`.** Runtime app connections already enable it (§2.15).
   Leave `alembic/env.py` FK-off.
-- **No HTTP exercise resolver / LLM / voice** until Phase 8 / 9.
+- **No voice / chatbot / microphone UI** until Phase 9. HTTP resolvers exist (§2.16).
 - **No RPE/RIR/`set_type` UI, archive/restore UI, rest timer, reorder UI, pagination.**
 - **No broad refactor unrelated to the active phase.** In particular, do **not**:
   migrate models to SQLAlchemy 2.0 `Mapped[]` style, introduce TypeScript, restructure folders,
@@ -1640,7 +1729,7 @@ gym-tracker-app/
 │   ├── gym.db                   # SQLite with REAL DATA (git-ignored) ⚠️
 │   ├── gym.db.backup-*          # pre-migration snapshots, REAL DATA (git-ignored) ⚠️
 │   ├── .env / .env.example      # .env is git-ignored and present locally
-│   ├── pytest.ini / tests/      # Phase 7 isolated regression suite (never gym.db)
+│   ├── pytest.ini / tests/      # Phase 7+8 isolated regression suite (never gym.db)
 │   ├── requirements.txt         # includes alembic==1.13.3, pytest, httpx
 │   ├── alembic.ini              # Alembic config; sqlalchemy.url intentionally BLANK
 │   ├── alembic/
@@ -1669,6 +1758,8 @@ gym-tracker-app/
 │       │                        #   normalization.py, schemas, service (scoping/CRUD/resolver), routes
 │       ├── workouts/            # models(Workout, WorkoutExercise, Set, SetType) schemas service routes
 │       ├── templates/           # models(Template, TemplateExercise) schemas service routes
+│       ├── commands/            # Phase 8: CreateSession/AddExercise/RecordSet/Finish/StartTemplate
+│       │                        #   + execute_command (calls existing services only)
 │       └── seed/                # exercises_seed.py (23 globals w/ slug + tracking + aliases)
 │                                #   + seeder.py (idempotent, keyed by slug)
 └── frontend/
@@ -1704,7 +1795,8 @@ gym-tracker-app/
 | Phase 4 — Templates (done) | `backend/app/templates/*`, §2.12, §4.1 / §4.2 (do **not** follow the obsolete template TODOs) |
 | Phase 5 — Granular Session/Set APIs (done) | `backend/app/workouts/{service,routes,models,schemas}.py`, §2.13, §4.6 / §4.7 |
 | Phase 7 — Tests (done) | `backend/tests/`, `frontend/src/lib/tracking.test.js`, §2.15 |
-| Phase 8 — AI Readiness (**next**) | `app/exercises/service.py::resolve_exercise`, §9 |
+| Phase 8 — AI Readiness (done) | `app/exercises/service.py::resolve_exercise`, `app/templates/service.py::resolve_template`, `app/workouts/service.py::list_active_workouts`, `app/commands/`, §2.16 |
+| Phase 9 — Voice Assistant (**next**) | §2.16 primitives, §9 |
 | Response/error conventions | `backend/app/core/response.py`, `backend/app/core/exceptions.py` |
 | Frontend API layer | `frontend/src/api/axiosClient.js` |
 | Frontend validation | `frontend/src/lib/validators.js` |
@@ -1856,6 +1948,5 @@ stale the moment anything is committed. Describe state semantically — by phase
 id, by what was verified — so this document only changes when the *project state* changes, not when
 the repository does.
 
-**Last verified:** 2026-09-07, after Phase 7 (Stabilization & Tests) completed.
-Locked decisions in §4 were **not** touched. Next is Phase 8 — AI Readiness.
-Voice Assistant is Phase 9. Neither has started.
+**Last verified:** 2026-09-07, after Phase 8 (AI Readiness) completed.
+Locked decisions in §4 were **not** touched. Next is Phase 9 — Voice Assistant.

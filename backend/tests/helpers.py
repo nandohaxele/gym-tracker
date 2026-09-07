@@ -68,6 +68,7 @@ def create_personal_exercise(
     primary: str = "reps",
     secondaries: list[str] | None = None,
     muscle_group: str | None = None,
+    synonyms: list[str] | None = None,
 ):
     payload = {
         "name": name,
@@ -76,6 +77,8 @@ def create_personal_exercise(
     }
     if muscle_group is not None:
         payload["muscle_group"] = muscle_group
+    if synonyms is not None:
+        payload["synonyms"] = synonyms
     return ok(client.post("/api/exercises", headers=headers, json=payload), 201)
 
 

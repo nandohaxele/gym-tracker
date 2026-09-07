@@ -6,6 +6,7 @@ caller's personal templates.
 Endpoints (mounted under /api by main.py):
     GET    /templates
     POST   /templates
+    POST   /templates/resolve
     GET    /templates/{template_id}
     PATCH  /templates/{template_id}
     DELETE /templates/{template_id}
@@ -25,6 +26,8 @@ from app.templates.schemas import (
     TemplateCreate,
     TemplateDetail,
     TemplateNameIn,
+    TemplateResolveIn,
+    TemplateResolveOut,
     TemplateSummary,
     TemplateUpdate,
 )
@@ -53,6 +56,39 @@ def create_template(
     """Create a personal template owned by the caller."""
     template = service.create_personal_template(db, current_user.id, payload)
     return ok(TemplateDetail.model_validate(template))
+
+
+@router.post("/templates/resolve")
+def resolve_template(
+    payload: TemplateResolveIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Resolve an exact normalized template name visible to the caller."""
+    result = service.resolve_template(
+        db, current_user.id, payload.query, scope=payload.scope
+    )
+    template = (
+        TemplateSummary.model_validate(result.template)
+        if result.template is not None
+        else None
+    )
+    candidates = (
+        [TemplateSummary.model_validate(item) for item in result.candidates]
+        if result.ambiguous
+        else []
+    )
+    return ok(
+        TemplateResolveOut(
+            status=result.status,
+            query=result.query,
+            normalized=result.normalized,
+            scope=result.scope,
+            level=result.level.value if result.level is not None else None,
+            template=template,
+            candidates=candidates,
+        )
+    )
 
 
 @router.get("/templates/{template_id}")
