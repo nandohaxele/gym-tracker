@@ -15,7 +15,12 @@ import {
 import { completeWorkout, deleteWorkout, getWorkout } from '@/api/workouts.js';
 import useAsync from '@/hooks/useAsync.js';
 import { formatDate } from '@/utils/format.js';
-import { formatPlannedHint, formatSetLine } from '@/lib/tracking.js';
+import {
+  exerciseDisplayName,
+  formatPlannedHint,
+  formatSetLine,
+  isArchivedExercise,
+} from '@/lib/tracking.js';
 import PageContainer from '@/components/ui/PageContainer.jsx';
 import StatusView from '@/components/ui/StatusView.jsx';
 import AppButton, { buttonVariants } from '@/components/ui/AppButton.jsx';
@@ -31,8 +36,15 @@ function ExerciseSection({ workoutExercise }) {
   return (
     <div className="flex flex-col gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm">
       <div>
-        <p className="font-semibold leading-tight">{exercise.name}</p>
-        {exercise.muscle_group && (
+        <p className="font-semibold leading-tight">
+          {exerciseDisplayName(exercise)}
+          {isArchivedExercise(exercise) && (
+            <span className="ml-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Archived
+            </span>
+          )}
+        </p>
+        {exercise?.muscle_group && (
           <p className="mt-0.5 text-xs uppercase tracking-wide text-muted-foreground">
             {exercise.muscle_group}
           </p>

@@ -241,7 +241,7 @@ def delete_personal_template(
     """Delete a personal template.
 
     Sessions started from it keep their planned_* snapshot. Provenance is
-    cleared explicitly because SQLite foreign keys are not enforced at runtime.
+    cleared in the service layer; runtime FK SET NULL is the DB backstop.
     """
     template = _load_own_personal(db, user_id, template_id)
     db.query(Workout).filter(Workout.source_template_id == template.id).update(

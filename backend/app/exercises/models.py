@@ -23,7 +23,6 @@ hand. The flip side is that a batch operation which drops `user_id` or `slug`
 must drop that CHECK constraint explicitly first.
 """
 
-from datetime import datetime
 from enum import Enum
 
 from sqlalchemy import (
@@ -41,6 +40,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
+from app.core.utc import utc_now_naive
 
 
 class TrackingType(str, Enum):
@@ -105,7 +105,7 @@ class Exercise(Base):
     slug = Column(String(140), nullable=True)
     muscle_group = Column(String(60), nullable=True, index=True)
     is_active = Column(Boolean, nullable=False, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utc_now_naive, nullable=False)
 
     tracking = relationship(
         "ExerciseTracking",

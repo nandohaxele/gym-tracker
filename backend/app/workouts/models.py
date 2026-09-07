@@ -13,7 +13,7 @@ Cascade strategy:
     - WorkoutExercise -> Exercise: RESTRICT, never delete catalog rows.
 """
 
-from datetime import datetime
+from datetime import date as _date
 from enum import Enum
 
 from sqlalchemy import (
@@ -29,7 +29,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
-from app.core.utc import UtcDateTime, utc_now
+from app.core.utc import UtcDateTime, utc_now, utc_now_naive
 
 
 def _planned_pair_sql(min_col: str, max_col: str) -> str:
@@ -66,8 +66,8 @@ class Workout(Base):
         index=True,
     )
     name = Column(String(120), nullable=False)
-    date = Column(Date, nullable=False, default=lambda: datetime.utcnow().date())
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    date = Column(Date, nullable=False, default=_date.today)
+    created_at = Column(DateTime, nullable=False, default=utc_now_naive)
     started_at = Column(UtcDateTime, nullable=False, default=utc_now)
     ended_at = Column(UtcDateTime, nullable=True)
     source_template_id = Column(

@@ -17,6 +17,8 @@ import {
   emptyDraftRow,
   hasPrimaryValue,
   lastWeightMap,
+  shouldDeleteSetViaApi,
+  shouldPersistSet,
   rowsForWorkoutExercise,
   setWritePayload,
   trackingOf,
@@ -102,18 +104,20 @@ export default function WorkoutEditorPage() {
   };
 
   const handleMetaBlur = async () => {
-    if (!workout) return;
+    if (!workout) return false;
     const trimmed = name.trim();
     if (!trimmed) {
       setServerError('Workout name is required');
-      return;
+      return false;
     }
-    if (trimmed === workout.name && date === toDateInputValue(workout.date)) return;
+    if (trimmed === workout.name && date === toDateInputValue(workout.date)) return true;
     try {
       setServerError(null);
       await patchWorkout(id, { name: trimmed, date });
+      return true;
     } catch (err) {
       setServerError(err?.message || 'Could not save name or date.');
+      return false;
     }
   };
 
@@ -188,8 +192,8 @@ export default function WorkoutEditorPage() {
     const row = block.rows[setIndex];
     if (!row) return;
     const tracking = trackingOf(block.exercise);
+    if (!shouldPersistSet(row, tracking)) return;
     const primaryOk = hasPrimaryValue(row, tracking.primary);
-    if (!row.set_id && !primaryOk) return;
 
     const payload = primaryOk
       ? setWritePayload(row, tracking)
@@ -241,7 +245,7 @@ export default function WorkoutEditorPage() {
     const row = block.rows[setIndex];
     if (!row) return;
 
-    if (!row.set_id) {
+    if (!shouldDeleteSetViaApi(row)) {
       replaceBlock(workoutExerciseId, (current) => ({
         ...current,
         rows:
@@ -284,10 +288,11 @@ export default function WorkoutEditorPage() {
   };
 
   const handleFinish = async () => {
+    const metaOk = await handleMetaBlur();
+    if (!metaOk) return;
     setBusy(true);
     setServerError(null);
     try {
-      await handleMetaBlur();
       const updated = await completeWorkout(id);
       setData(updated);
       navigate(`/workouts/${id}`, { replace: true });

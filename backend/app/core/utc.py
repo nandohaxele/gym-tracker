@@ -21,6 +21,15 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def utc_now_naive() -> datetime:
+    """Naive UTC for `created_at` columns that are not UtcDateTime.
+
+    SQLite stores those as DATETIME without tzinfo. Callers must treat the
+    stored value as UTC, never as server-local time.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 def as_utc(value: Optional[datetime]) -> Optional[datetime]:
     """Return timezone-aware UTC. Naive values are treated as UTC, never local."""
     if value is None:

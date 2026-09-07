@@ -1,3 +1,6 @@
+> **STALE / dangerous.** `POST /sets` and `PUT /sets/{id}` do **not** exist.
+> Authoritative surface: `docs/AI_HANDOFF.md` §2.6. Granular Set APIs only.
+
 # API Contract
 
 Base URL: /api

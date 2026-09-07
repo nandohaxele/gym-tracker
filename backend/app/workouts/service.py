@@ -390,7 +390,8 @@ def _match_workout_exercises(
             matches.append(candidate)
         return matches
 
-    # All ids omitted: legacy fallback or reject.
+    # All ids omitted: legacy compatibility fallback (Phase 7 debt).
+    # The live editor sends child ids. Ambiguous ID-less trees reject.
     if not _legacy_we_fallback_ok(items, existing):
         raise ValidationError(
             "Cannot reconcile workout exercises without ids when the same "

@@ -3,8 +3,8 @@
 A simple, mobile-first workout tracking web app for personal use. Full-stack scaffold:
 a FastAPI modular monolith backend and a Vite + React JavaScript frontend.
 
-> Status: project skeleton only. Files contain module docstrings and `TODO` markers
-> describing what each piece will hold once business logic is implemented.
+> Canonical project state: [docs/AI_HANDOFF.md](docs/AI_HANDOFF.md).
+> Current phase: **Phase 7 complete**. Next is Phase 8 — AI Readiness.
 
 ---
 
@@ -31,7 +31,7 @@ gym-tracker-app/
 │   ├── src/
 │   │   ├── api/             Axios client + per-resource modules
 │   │   ├── context/         AuthContext, ThemeContext
-│   │   ├── hooks/           useAuth, useTheme, useRestTimer
+│   │   ├── hooks/           useAuth, useTheme, useAsync
 │   │   ├── routes/          AppRoutes, ProtectedRoute
 │   │   ├── pages/           Login, Register, Home, WorkoutEditor, WorkoutDetail, 404
 │   │   ├── components/      layout, auth, workouts, ui
@@ -92,7 +92,7 @@ gym-tracker-app/
   globally. Per-resource modules (`auth.js`, `workouts.js`, ...) are thin.
 - **Routing**: `react-router-dom` v6 nested routes; a `ProtectedRoute` guard
   redirects to `/login` when there is no token.
-- **Rest timer**: `useRestTimer` is intentionally frontend-only per PRD.
+- **Tests**: backend `pytest` (isolated SQLite) and frontend `npm test` (Vitest). See below.
 
 ---
 
@@ -152,6 +152,19 @@ npm run dev
 App will be available at `http://localhost:5173`.
 The Vite dev server proxies `/api` to `http://localhost:8000`.
 
+### Tests
+
+Never pointed at `backend/gym.db`.
+
+```powershell
+# Backend — from backend/
+.\.venv\Scripts\python.exe -m pytest
+
+# Frontend — from frontend/
+npm test
+npm run build
+```
+
 ### Docker (backend)
 
 ```bash
@@ -167,7 +180,11 @@ enabled when you migrate.
 
 ## 4. API contract (recap)
 
+> **Stale table below.** Authoritative routes are in `docs/AI_HANDOFF.md` §2.6.
+> There is no `POST /sets` or `PUT /sets/{id}`. Use the Phase 5 granular Set APIs.
+
 All responses follow `{ success: boolean, data: any, error: string | null }`.
+Pydantic request-validation 422 also includes a `details` array (intentional exception).
 
 | Method | Path                | Auth | Notes                            |
 | ------ | ------------------- | ---- | -------------------------------- |
@@ -218,14 +235,7 @@ Per [agents.md](agents.md):
 
 ---
 
-## 7. Roadmap (out of scope for V1)
+## 7. Roadmap
 
-Per `PRD.md`, V1 explicitly does not include:
-
-- AI suggestions
-- Social features
-- Advanced analytics
-- Programs / templates
-
-These can be added later as additional backend modules without touching the
-existing ones, which is the main reason the modular monolith pattern was chosen.
+See `docs/AI_HANDOFF.md` §8. Templates are implemented. Next is Phase 8 — AI
+Readiness, then Phase 9 — Voice. Do not start those here.

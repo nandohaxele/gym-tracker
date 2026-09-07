@@ -1,6 +1,6 @@
 // Workouts / Session API.
-// Nested PUT remains available as a legacy fallback and is unused by the
-// live editor. Normal Session edits use PATCH + granular child routes.
+// Live Session edits use PATCH + granular child routes. Backend PUT remains
+// as unused compatibility debt and is not called from the frontend.
 
 import client from './axiosClient.js';
 
@@ -14,10 +14,6 @@ export async function getWorkout(id) {
 
 export async function createWorkout(payload) {
   return client.post('/workouts', payload);
-}
-
-export async function updateWorkout(id, payload) {
-  return client.put(`/workouts/${id}`, payload);
 }
 
 export async function patchWorkout(id, payload) {
@@ -34,10 +30,6 @@ export async function completeWorkout(id) {
 
 export async function addWorkoutExercise(workoutId, payload) {
   return client.post(`/workouts/${workoutId}/exercises`, payload);
-}
-
-export async function reorderWorkoutExercises(workoutId, ids) {
-  return client.post(`/workouts/${workoutId}/exercises/reorder`, { ids });
 }
 
 export async function deleteWorkoutExercise(workoutExerciseId) {

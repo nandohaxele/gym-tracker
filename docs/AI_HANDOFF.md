@@ -5,19 +5,20 @@
 > *actually implemented today*, the *locked* domain decisions that must not be re-litigated, the known
 > technical debt, and the exact next task.
 >
-> **Branch:** `main` · **Last verified:** 2026-09-06
+> **Branch:** `main` · **Last verified:** 2026-09-07
 >
 > **Project state:** **Phase 1 — Alembic Foundation: COMPLETED** (§2.9) ·
 > **Phase 2 — Exercise Domain: COMPLETED** (§2.10) ·
 > **Phase 3 — Set & Tracking: COMPLETED** (§2.11) ·
 > **Phase 4 — Templates: COMPLETED** (§2.12) ·
 > **Phase 5 — Granular Session/Set APIs: COMPLETED** (§2.13) ·
-> **Phase 6 — Frontend adaptation: COMPLETED** (§2.14).
+> **Phase 6 — Frontend adaptation: COMPLETED** (§2.14) ·
+> **Phase 7 — Stabilization & Tests: COMPLETED** (§2.15).
 > Alembic owns schema evolution: baseline **`f3f47238398b`**, head **`0153e917bf85`**.
-> No Phase 6 migration. Session editor uses granular APIs; Templates UI is
-> live; `weight` alias retired in favor of `weight_kg`. Two additive reads:
-> tracking on `ExerciseRefOut`, `GET /api/exercises/last-weights`.
-> **Next task: Phase 7 — Stabilization & Tests** (§7). Do not start it here.
+> No Phase 6/7 migration. Runtime SQLite `PRAGMA foreign_keys=ON` is enabled
+> in `app/core/database.py` (`make_engine`); Alembic stays FK-off.
+> Backend pytest + frontend Vitest + `npm run build` are the gates.
+> **Next task: Phase 8 — AI Readiness** (§7). Do not start it here.
 >
 > This document deliberately records **no commit hash**. Git is the source of truth for revision
 > history — run `git log`/`git status` if you need it. Describe state semantically here so this file
@@ -55,7 +56,7 @@ first-class concern.
 | Auth | JWT bearer HS256 via `python-jose`; password hashing via `passlib[bcrypt]` with **`bcrypt` pinned to 4.0.1** (passlib 1.7.4 breaks on bcrypt ≥ 4.1 — do not bump it casually; the reason is documented in `requirements.txt`) |
 | Server | uvicorn 0.30.6 |
 | Migrations | **Alembic 1.13.3** — baseline `f3f47238398b`, head `0153e917bf85`; `create_all()` removed from startup (see §2.9–§2.13) |
-| Tests | **NONE** (no test files, no pytest/httpx in `requirements.txt`) |
+| Tests | **pytest 8.3.3 + httpx 0.27.2** — isolated temp SQLite, Alembic upgrade + real seeder (`backend/tests/`). Never uses `gym.db`. |
 
 ## Current frontend stack
 
@@ -67,6 +68,7 @@ first-class concern.
 | Components | Hand-rolled primitives in shadcn *style*; the shadcn CLI is **not** installed. Icons via `lucide-react` |
 | Routing | `react-router-dom` 6.26.2 |
 | Forms | React Hook Form 7.53 + Zod 3.23 |
+| Tests | **Vitest 2.1** — `frontend/src/lib/tracking.test.js` (draft vs recorded, persist guards, set 38). `npm test` + `npm run build`. No Playwright. |
 | HTTP | Axios 1.7, single client with interceptors |
 | State | React Context (`AuthContext`, `ThemeContext`) |
 | Path alias | `@` → `frontend/src` (configured in both `vite.config.js` and `jsconfig.json`) |
@@ -301,8 +303,8 @@ Working features:
   `StatusView` (empty/error states), `Modal`, `Label`.
 - **Hooks**: `useAuth`, `useTheme`, `useAsync`, `useRestTimer`.
 
-**NOT implemented / not wired:** rest timer UI (component exists but is imported by nothing —
-see §2.8), archive/restore UI, statistics/charts, profile/settings page, offline
+**NOT implemented / not wired:** rest timer (deleted in Phase 7 — was unwired),
+archive/restore UI, statistics/charts, profile/settings page, offline
 support, PWA, i18n framework (some Italian strings are hardcoded). Templates UI
 and in-picker personal exercise creation shipped in Phase 6.
 
@@ -345,18 +347,24 @@ POST   /api/templates/{template_id}/start
 That is the complete list. All responses use the `{success, data, error}` envelope.
 Interactive docs: `http://localhost:8000/docs`.
 
-## 2.7 Tests — NONE
+## 2.7 Tests — IMPLEMENTED (Phase 7)
 
-There are **zero** test files in the repository, and `pytest` / `httpx` are not in
-`backend/requirements.txt`. There is no CI configuration. All verification so far has been manual
-(Swagger UI, browser, ad-hoc scripts). Phase 1 and Phase 2 verification was likewise manual, using
-throwaway scratch databases and temporary scripts that were **deleted afterwards** — nothing was
-left in the repository. Phase 2's checks are enumerated in §2.10 so a future agent knows what was
-actually covered.
+**Backend** (`backend/tests/`, run from `backend/`): `pytest` + `TestClient`/`httpx`.
+`conftest.py` points `DATABASE_URL` at a temp SQLite file **before** importing the
+app, runs `alembic upgrade head`, then `run_seed`. Live `gym.db` is asserted out.
 
-Note for whoever builds the real suite: `httpx` is **not installed**, so
-`fastapi.testclient.TestClient` does not work today. Phase 2's HTTP checks ran against a real
-`uvicorn` process using stdlib `urllib`.
+Coverage is contractual, not percentage-driven: auth/ownership 404s, exercise
+isolation/freeze/archive, primary tracking + set 38 grandfathering, granular
+stable IDs + compact `order_index`, unused PUT (ID-bearing keep / ID-less
+ambiguous reject), Session clocks + complete idempotency, UTC helpers,
+Template Start/independence/save-as-template, last-weights scoping, Alembic
+fresh-head + defensive downgrade, Pydantic 422 `details` exception, runtime FK.
+
+**Frontend:** `npm test` → Vitest on `tracking.js` (draft rows, persist/delete
+guards, conversions, set 38 line). `npm run build` stays a gate.
+
+**CI:** `.github/workflows/ci.yml` runs backend pytest, frontend test, frontend
+build. No Playwright, no live DB.
 
 ## 2.8 Known inconsistencies (verified)
 
@@ -374,12 +382,8 @@ Note for whoever builds the real suite: `httpx` is **not installed**, so
    the new domain roadmap numbering in §8. Use §8 numbering from now on.
 5. **`docs/decision-log.md` is empty (0 bytes)** despite being the designated place for decisions.
    This handoff document is currently the only durable record.
-6. **`RestTimer.jsx` is orphaned and would render unstyled.** It is imported by no page, and it uses
-   legacy BEM class names (`rest-timer`, `rest-timer__display`, `btn`, `btn--ghost`) that no longer
-   exist since the stylesheet was rewritten for Tailwind.
-7. **Orphaned legacy UI primitives**: `frontend/src/components/ui/Button.jsx` and
-   `frontend/src/components/ui/Input.jsx` are imported by nothing (superseded by `AppButton` /
-   `AppInput`) and also reference removed CSS classes.
+6. ✅ **Resolved by Phase 7.** `RestTimer.jsx` / `useRestTimer.js` deleted (unwired).
+7. ✅ **Resolved by Phase 7.** Legacy `Button.jsx` / `Input.jsx` deleted.
 8. **Two different workout-date defaults** exist in the backend — `Workout.date` model default uses
    `datetime.utcnow().date()` while `create_workout` uses `date.today()` (server-local). See §5.
 9. **`datetime.utcnow()` is used for `created_at` defaults**, which is deprecated in Python 3.12+.
@@ -780,7 +784,24 @@ No migration. Head remains `0153e917bf85`.
   drafts never POST until the primary metric is present; live editor uses
   PATCH + granular WE/Set APIs; Finish calls `/complete` only; personal
   exercise create lives in the picker. No RPE/RIR/`set_type` UI. No AI/voice.
-- **PUT** remains in `workouts.js` as an unused fallback.
+- **PUT** remains as a **backend** unused compatibility fallback. The frontend
+  `updateWorkout` wrapper was removed in Phase 7.
+
+## 2.15 Stabilization & Tests — IMPLEMENTED (Phase 7, COMPLETED)
+
+No migration. Head remains `0153e917bf85`.
+
+- **Backend tests** in `backend/tests/` (temp SQLite + Alembic + seeder).
+- **Frontend tests** in `frontend/src/lib/tracking.test.js` (Vitest).
+- **CI** `.github/workflows/ci.yml`: pytest + `npm test` + `npm run build`.
+- **Runtime `PRAGMA foreign_keys=ON`** via `make_engine` / connect listener.
+  Alembic `env.py` is unchanged (FK off for batch rebuilds).
+- **Pydantic 422** keeps extra `details` as an intentional envelope exception.
+- Small UI hardening: Finish blocked on empty name; `workouts ?? []`; archived
+  exercise label; dead RestTimer/Button/Input removed.
+- `datetime.utcnow()` model defaults replaced with `utc_now_naive` /
+  `date.today()` (no schema/data migration).
+- Live `gym.db` was not mutated by fixtures. Workout 10 and set 38 untouched.
 
 ---
 
@@ -1095,28 +1116,16 @@ When replacing `Exercise.tracking` or `Exercise.synonyms`, the service clears th
 **flushes before** assigning the new rows. SQLAlchemy's default save-before-delete flush order would
 otherwise INSERT the new rows before DELETEing the old ones and trip the unique indexes.
 
-⚠️ **SQLite caveat — verified, and STILL UNRESOLVED after Phases 1 and 2.**
-**Foreign key enforcement is currently OFF at runtime** (`PRAGMA foreign_keys` reads `0`). SQLite
-only enforces foreign keys when `PRAGMA foreign_keys=ON` is set per-connection, and
-**`app/core/database.py` does not set it** (there is no `connect` event listener; the only
-`connect_args` tweak is `check_same_thread=False`). Phase 1 deliberately did **not** change this.
-Consequences:
+✅ **SQLite runtime FK enforcement — resolved in Phase 7.**
+`app/core/database.py::make_engine` sets `PRAGMA foreign_keys=ON` on every
+application SQLite connection. Alembic `env.py` still creates its own engine
+**without** that listener so batch rebuilds keep their historical FK-off
+assumption. A default `sqlite3.connect('gym.db')` still reads pragma `0`
+(connection-local); `PRAGMA foreign_key_check` on the live file is clean.
 
-- The `ON DELETE CASCADE` / `ON DELETE RESTRICT` clauses are recorded in the schema but are
-  **currently inert at the engine level**.
-- Referential integrity and cascading deletes are enforced **only by the SQLAlchemy ORM cascades**,
-  which is why deletes work correctly through the API but would not be protected against raw SQL.
-- `ON DELETE RESTRICT` on `workout_exercises.exercise_id` therefore does **not** currently prevent
-  deleting a referenced catalog exercise via raw SQL.
-
-It was confirmed during Phase 1 that enabling the PRAGMA is **not** required for safe Alembic
-operation: stamping writes only the `alembic_version` row, and the baseline carries the same
-CASCADE/RESTRICT clauses either way. Phase 2 confirmed the same for a real batch rebuild — with
-foreign keys off, `DROP TABLE exercises` mid-rebuild is permitted and the rename restores
-`workout_exercises`' reference; `pragma foreign_key_check` on the live database returns **no
-violations**, before and after both phases. Enabling it remains a **behavior change, not
-infrastructure** — decide it explicitly, and be aware of it when writing data migrations. Tracked as
-debt in §5.
+At the **application** engine, CASCADE / RESTRICT / SET NULL are now enforced.
+Alembic batch rebuilds still run with FK off, which is required for SQLite
+table rewrites. Do not attach `make_engine` to `alembic/env.py`.
 
 ---
 
@@ -1276,29 +1285,15 @@ All storage uses canonical units. Any unit conversion is a presentation concern.
    explicitly computed **local** `YYYY-MM-DD` (`utils/format.js::toDateInputValue`), which masks the
    bug. Decide one timezone policy during the domain phases.
 7. ✅ **Resolved by Phase 4.** Template is a separate domain (`templates` / `template_exercises`).
-8. ⚠️ **The existing `TODO` comments that suggest implementing "Workout-as-template" MUST NOT be
-    followed.** Specifically:
-    - `app/workouts/routes.py` (~line 33): suggests `POST /workouts/templates` persisting "a
-      Workout-like record flagged as a template" plus `POST /workouts/from-template/{id}`.
-    - `app/workouts/schemas.py` (bottom): suggests `WorkoutTemplate` schemas cloning a Workout.
-
-    These predate the locked decisions. §4.1 requires Template and Session to be **separate
-    entities**, not a boolean flag on `Workout`. Treat these TODOs as obsolete.
-9. **No tests and no CI** — every regression is currently caught by hand. Phase 1 deliberately did
-   not start a test suite; its verification scripts were kept outside the repository.
-10. **Deprecated `datetime.utcnow()`** for `created_at` defaults across models (Python 3.12+ warns).
-11. **Dead frontend code**: `api/sets.js`, `components/workouts/RestTimer.jsx`,
-    `hooks/useRestTimer.js`, `components/ui/Button.jsx`, `components/ui/Input.jsx`. The last three
-    also reference CSS classes that no longer exist.
-12. ⚠️ **SQLite foreign keys are NOT enforced — UNRESOLVED, carried forward from Phase 1.**
-    **Foreign key enforcement is currently OFF at runtime**: `PRAGMA foreign_keys` reads `0` because
-    `PRAGMA foreign_keys=ON` is never issued in `app/core/database.py`. All the
-    `ON DELETE CASCADE`/`RESTRICT` clauses are therefore **inert at the engine level**, and
-    referential integrity depends **entirely on the SQLAlchemy ORM cascades** (details in §3).
-    Deletes work correctly through the API but nothing protects the data against raw SQL.
-    Phase 1 confirmed this is **not** required for safe Alembic operation and explicitly left it
-    alone, because enabling it is a **behavior change, not infrastructure**. Decide it during the
-    domain phases.
+8. ✅ **Resolved by Phase 7.** Obsolete Workout-as-template TODOs removed from
+    `workouts/routes.py` and `workouts/schemas.py`. §4.1 still forbids `is_template`.
+9. ✅ **Resolved by Phase 7.** pytest + Vitest + optional GitHub CI. Tests never use `gym.db`.
+10. ✅ **Resolved by Phase 7 for model defaults.** `created_at` uses `utc_now_naive`;
+    `Workout.date` default matches the service (`date.today()`). Historical rows unchanged.
+11. ✅ **Resolved by Phase 7.** `api/sets.js` is live (Phase 6). RestTimer / legacy Button/Input
+    deleted. `updateWorkout` frontend wrapper removed. Backend PUT + ID-less fallback remain.
+12. ✅ **Resolved by Phase 7.** Runtime `PRAGMA foreign_keys=ON` on app connections.
+    Alembic remains FK-off. See §3.
 13. ⚠️ **The baseline migration's `downgrade()` is destructive.** `downgrade()` on `f3f47238398b`
     drops every table — against the real populated `backend/gym.db` that is total, unrecoverable
     data loss. It exists only so the revision is reversible on throwaway databases.
@@ -1335,9 +1330,9 @@ All storage uses canonical units. Any unit conversion is a presentation concern.
     succeed; a PUT of workout 5 that resubmits that set without `duration_seconds` is a 422
     until Phase 6 can send duration. Do not invent a duration in a later migration. Saving
     workout 5 as a template derives `target_reps 200–200` and NULL duration — that is correct.
-22. **Legacy ID-less PUT is a temporary fallback** until Phase 6 drops the nested tree.
-    It matches unique `exercise_id`s and same-count Sets by order. Duplicate exercises or
-    a Set count change is rejected. The current editor now sends child ids.
+22. **Legacy ID-less PUT is remaining compatibility debt.** The live editor does not
+    call PUT. Tests cover ID-bearing preserve and ambiguous ID-less reject. Do not
+    remove the backend route in Phase 8.
 23. **Historical `started_at` / `ended_at` are date-midnight UTC sentinels**, not real gym
     clocks. Workout 9 is the proof case: `date=2026-07-02`, `created_at=2026-07-03 07:00:55`.
     Do not later "fix" those timestamps from `created_at`. New Sessions get real `now(UTC)`.
@@ -1443,29 +1438,28 @@ These are **not** oversights.
   *create new table → copy data → drop old → rename* pattern; Alembic's `batch_alter_table` does
   this. Always copy `gym.db` to a timestamped file first, and verify row counts afterwards.
 
-## Recorded row counts (current — measured 2026-09-06, after Phase 5)
+## Recorded row counts (current — measured 2026-09-07, after Phase 6 usage + Phase 7)
 
 | Table | Rows | `max(id)` |
 |---|---|---|
 | `users` | **9** | 9 |
 | `exercises` | **23** | 23 |
-| `workouts` | **8** | 9 |
-| `workout_exercises` | **17** | 32 |
-| `sets` | **58** | 98 |
+| `workouts` | **9** | 10 |
+| `workout_exercises` | **18** | 33 |
+| `sets` | **62** | 102 |
 | `exercise_tracking` | **23** | 23 |
 | `exercise_synonyms` | **26** | 26 |
 | `templates` | **0** | — |
 | `template_exercises` | **0** | — |
 
-The first seven are unchanged from after Phase 3. Phase 5 changed **no existing domain primary
-keys** and no historical row counts. Every `workouts.source_template_id` is NULL. Every
-`workout_exercises.planned_*` is NULL. Every historical `started_at` / `ended_at` is UTC
-midnight of that row's `date` (workout 9 = 2026-07-02T00:00:00Z). No historical plan or
-provenance was inferred.
+Phase 7 tests did **not** change these counts. Workout **10** (user 8) is real Phase 6
+usage: WE **33**, Sets **99–102**, real UTC clocks (not midnight sentinels). Historical
+rows 1–9 remain date-midnight sentinels. Every `source_template_id` is NULL. Every
+historical `planned_*` is NULL. Workout 9 = 2026-07-02T00:00:00Z. Set 38 unchanged.
 
 `alembic_version` holds **`0153e917bf85`**.
 
-Extra facts useful as invariants: workouts per user = `{user 7: 1, user 8: 5, user 9: 2}`;
+Extra facts useful as invariants: workouts per user = `{user 7: 1, user 8: 6, user 9: 2}`;
 `sets` with `weight_kg = 0`: **0**; `sets` with non-null duration/distance/RPE/RIR: **0**;
 set 38 remains `reps=200`, `weight_kg=96`, `duration_seconds=NULL`; `pragma foreign_key_check`
 and `pragma integrity_check` both clean. The gaps between row counts and `max(id)` are expected
@@ -1566,10 +1560,17 @@ Delivered: tracking-aware live Session editor, Templates UI, granular writes,
 `GET /exercises/last-weights`, tracking on `ExerciseRefOut`, `weight` alias
 retired. No migration. Full detail in **§2.14**. Do not redo this work.
 
-## The next task is: PHASE 7 — Stabilization & Tests.
+## ✅ PHASE 7 — Stabilization & Tests: **COMPLETED**
 
-Do not start Phase 7 in this change. Phase 7 is tests and hardening, not AI or voice.
-Phase 8 is AI Readiness. Phase 9 is the Voice Assistant.
+Delivered: pytest + isolated SQLite/Alembic/seed harness, Vitest `tracking.js`
+suite, `npm run build` gate, GitHub CI, runtime `PRAGMA foreign_keys=ON` on
+app connections only, small UI hardening, dead-code cleanup. No migration, no
+AI, no voice. Full detail in **§2.15**. Do not redo this work.
+
+## The next task is: PHASE 8 — AI Readiness.
+
+Do not start Phase 8 in this change. Phase 8 is the HTTP resolver consumer and
+AI-oriented contracts. Phase 9 is the Voice Assistant.
 
 ---
 
@@ -1586,8 +1587,8 @@ Phase 8 is AI Readiness. Phase 9 is the Voice Assistant.
 | **Phase 4** | Templates (separate entity, global immutable + personal, start-template-creates-Session, save-Session-as-My-Template derivation — per §4.1/§4.2) — revision `68505223da63` (§2.12) | ✅ **COMPLETED** |
 | **Phase 5** | Granular Session/Set APIs (stable IDs, `POST /workout-exercises/{id}/sets`, `PATCH`/`DELETE /sets/{id}`, `order_index` normalization, `started_at`/`ended_at` — per §4.6/§4.7) — revision `0153e917bf85` (§2.13) | ✅ **COMPLETED** |
 | **Phase 6** | Frontend adaptation to the new domain and APIs | ✅ **COMPLETED** (§2.14) |
-| **Phase 7** | Stabilization & Tests | ← **NEXT** |
-| **Phase 8** | AI Readiness | not started |
+| **Phase 7** | Stabilization & Tests | ✅ **COMPLETED** (§2.15) |
+| **Phase 8** | AI Readiness | ← **NEXT** |
 | **Phase 9** | Voice Assistant | not started |
 
 Each phase should be a self-contained, reviewable change with its own migration(s). Do not run ahead.
@@ -1604,22 +1605,16 @@ Explicitly out of scope until the corresponding phase is reached:
   lookup tables, tag systems, or muscle-group taxonomies "while we're here" (§4.8).
 - **No exercise media implementation yet.** No images, no video, no thumbnails, no file uploads or
   storage layer.
-- **No template-as-workout shortcut.** Do not implement a `is_template` boolean on `Workout`, and do
-  not follow the obsolete TODOs in `app/workouts/routes.py` / `schemas.py` (§5.8).
+- **No template-as-workout shortcut.** Do not implement a `is_template` boolean on `Workout`.
 - **No DB reset.** Never drop/recreate `backend/gym.db`, and never `alembic downgrade` against it
   (§6, §5.13).
-- **No `PRAGMA foreign_keys=ON` as a drive-by change.** It is a runtime behavior change (§5.12);
-  it needs an explicit decision, not a "while we're here" fix.
-- **No frontend adaptation during Phase 5 leftovers.** Granular Session/Set APIs and Session
-  clocks are done (§2.13). Wiring the editor, Template UI, and tracking fields is Phase 6.
-- **No broad frontend Exercise / Set UI until Phase 6 is the active phase.** No tracking UI, no
-  personal-exercise or archive/restore screens, no `ExercisePicker` redesign, no RPE/RIR fields
-  — that is Phase 6 (§5.2, §5.3, §5.5). The `weight` alias is a compatibility shim and is not
-  a precedent for further frontend work.
+- **No Alembic `PRAGMA foreign_keys=ON`.** Runtime app connections already enable it (§2.15).
+  Leave `alembic/env.py` FK-off.
+- **No HTTP exercise resolver / LLM / voice** until Phase 8 / 9.
+- **No RPE/RIR/`set_type` UI, archive/restore UI, rest timer, reorder UI, pagination.**
 - **No broad refactor unrelated to the active phase.** In particular, do **not**:
   migrate models to SQLAlchemy 2.0 `Mapped[]` style, introduce TypeScript, restructure folders,
-  delete the dead frontend code from §5.11, rewrite the stale docs, or reformat files. Note them,
-  leave them.
+  or rewrite PRD/architecture wholesale. Note them, leave them.
 
 ---
 
@@ -1645,7 +1640,8 @@ gym-tracker-app/
 │   ├── gym.db                   # SQLite with REAL DATA (git-ignored) ⚠️
 │   ├── gym.db.backup-*          # pre-migration snapshots, REAL DATA (git-ignored) ⚠️
 │   ├── .env / .env.example      # .env is git-ignored and present locally
-│   ├── requirements.txt         # includes alembic==1.13.3
+│   ├── pytest.ini / tests/      # Phase 7 isolated regression suite (never gym.db)
+│   ├── requirements.txt         # includes alembic==1.13.3, pytest, httpx
 │   ├── alembic.ini              # Alembic config; sqlalchemy.url intentionally BLANK
 │   ├── alembic/
 │   │   ├── env.py               # URL from app settings; target_metadata = Base.metadata
@@ -1663,7 +1659,7 @@ gym-tracker-app/
 │       ├── core/
 │       │   ├── config.py        # pydantic-settings; DATABASE_URL, JWT_*, CORS_ORIGINS
 │       │   ├── utc.py           # UtcDateTime + utc_now / date_midnight_utc / serialize_utc
-│       │   ├── database.py      # engine, SessionLocal, Base, get_db
+│       │   ├── database.py      # make_engine + runtime PRAGMA foreign_keys=ON
 │       │   ├── dependencies.py  # get_current_user
 │       │   ├── exceptions.py    # NotFoundError/ValidationError + global handlers
 │       │   ├── response.py      # ok() → {success, data, error}
@@ -1707,7 +1703,8 @@ gym-tracker-app/
 | Phase 3 — Set / tracking (done) | `backend/app/workouts/{models,schemas,service}.py`, §2.11, §4.3/§4.4 |
 | Phase 4 — Templates (done) | `backend/app/templates/*`, §2.12, §4.1 / §4.2 (do **not** follow the obsolete template TODOs) |
 | Phase 5 — Granular Session/Set APIs (done) | `backend/app/workouts/{service,routes,models,schemas}.py`, §2.13, §4.6 / §4.7 |
-| Phase 6 — Frontend adaptation (**next**) | `frontend/src/api/workouts.js`, `frontend/src/components/workouts/*`, §5.5 |
+| Phase 7 — Tests (done) | `backend/tests/`, `frontend/src/lib/tracking.test.js`, §2.15 |
+| Phase 8 — AI Readiness (**next**) | `app/exercises/service.py::resolve_exercise`, §9 |
 | Response/error conventions | `backend/app/core/response.py`, `backend/app/core/exceptions.py` |
 | Frontend API layer | `frontend/src/api/axiosClient.js` |
 | Frontend validation | `frontend/src/lib/validators.js` |
@@ -1733,6 +1730,9 @@ gym-tracker-app/
 
 # seed the exercise catalog (idempotent; requires an already-migrated schema)
 .\.venv\Scripts\python.exe -m scripts.seed_db
+
+# regression suite (isolated temp SQLite — never gym.db)
+.\.venv\Scripts\python.exe -m pytest
 ```
 
 ### Alembic
@@ -1799,6 +1799,7 @@ listed in §6; the Phase 5 rollback point is `gym.db.backup-20260906-232829`.
 # from frontend/
 npm install
 npm run dev     # http://localhost:5173, host: true (exposed on the LAN for phone testing)
+npm test        # Vitest (tracking.js contracts)
 npm run build
 ```
 
@@ -1855,7 +1856,6 @@ stale the moment anything is committed. Describe state semantically — by phase
 id, by what was verified — so this document only changes when the *project state* changes, not when
 the repository does.
 
-**Last verified:** 2026-09-06, after Phase 6 (Frontend adaptation) completed. Locked
-decisions in §4 were **not** touched by that update. Frontend now matches the
-Phase 2–5 domain. Next is Phase 7 — Stabilization & Tests. AI Readiness is
-Phase 8. Voice Assistant is Phase 9. Neither has started.
+**Last verified:** 2026-09-07, after Phase 7 (Stabilization & Tests) completed.
+Locked decisions in §4 were **not** touched. Next is Phase 8 — AI Readiness.
+Voice Assistant is Phase 9. Neither has started.

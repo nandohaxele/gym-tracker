@@ -1,3 +1,6 @@
+> **STALE / deprecated as a source of truth.** Templates are a locked core
+> entity (`docs/AI_HANDOFF.md` §4.1), not a non-goal. Use the handoff.
+
 # Gym App - Product Requirements Document
 
 ## Goal

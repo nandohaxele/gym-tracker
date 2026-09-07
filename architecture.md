@@ -1,3 +1,6 @@
+> **STALE schema.** Current tables, Alembic head, and FK policy live in
+> `docs/AI_HANDOFF.md` §3. Do not implement from this file.
+
 # Architecture
 
 ## Backend

@@ -354,7 +354,3 @@ class WorkoutDetail(BaseModel):
     @field_serializer("created_at", "started_at", "ended_at")
     def _timestamps(self, value: Optional[datetime]) -> Optional[str]:
         return serialize_utc(value)
-
-
-# TODO (future): WorkoutTemplate schemas -- a separate flow where saved
-# templates can be cloned into a new dated Workout for the current day.

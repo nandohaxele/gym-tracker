@@ -12,8 +12,6 @@ Uniqueness uses SQLite partial unique indexes: a personal name may reuse a
 global name, and SQLite NULL-distinct UNIQUE would not enforce global uniqueness.
 """
 
-from datetime import datetime
-
 from sqlalchemy import (
     CheckConstraint,
     Column,
@@ -27,6 +25,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
+from app.core.utc import utc_now_naive
 
 
 def _target_pair_sql(min_col: str, max_col: str) -> str:
@@ -69,7 +68,7 @@ class Template(Base):
     )
     name = Column(String(120), nullable=False)
     name_normalized = Column(String(120), nullable=False, index=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=utc_now_naive)
 
     user = relationship("User", back_populates="templates")
     exercises = relationship(

@@ -526,7 +526,8 @@ def archive_personal_exercise(
 
     Owner personal TemplateExercise rows that reference this exercise are
     removed in the same transaction. Sessions, Sets, and global templates
-    are not touched. Cleanup is explicit because PRAGMA foreign_keys is off.
+    are not touched. Cleanup is explicit (archive does not delete the
+    Exercise row, so RESTRICT/CASCADE do not apply).
     """
     from app.templates.service import remove_exercise_from_owner_personal_templates
 

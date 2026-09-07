@@ -7,7 +7,7 @@
 //     content so the header/input stays put while the sheet grows/shrinks
 //     downward with its results (collapsing bottom-up, keyboard-friendly).
 //
-// TODO (Phase 5 Step 3 polish): full focus trap + return-focus on close.
+// Focus trap / return-focus on close is deferred; Escape + backdrop already close.
 
 import { useEffect } from 'react';
 import { X } from 'lucide-react';

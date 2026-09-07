@@ -14,6 +14,7 @@ import {
 import { deleteTemplate, getTemplate, personalizeTemplate, startTemplate } from '@/api/templates.js';
 import useAsync from '@/hooks/useAsync.js';
 import { formatDistance, formatDuration } from '@/utils/format.js';
+import { exerciseDisplayName, isArchivedExercise } from '@/lib/tracking.js';
 import PageContainer from '@/components/ui/PageContainer.jsx';
 import StatusView from '@/components/ui/StatusView.jsx';
 import AppButton, { buttonVariants } from '@/components/ui/AppButton.jsx';
@@ -178,8 +179,15 @@ export default function TemplateDetailPage() {
                 key={ex.id}
                 className="rounded-2xl border border-border bg-card p-4 shadow-sm"
               >
-                <p className="font-semibold">{ex.exercise.name}</p>
-                {ex.exercise.muscle_group && (
+                <p className="font-semibold">
+                  {exerciseDisplayName(ex.exercise)}
+                  {isArchivedExercise(ex.exercise) && (
+                    <span className="ml-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      Archived
+                    </span>
+                  )}
+                </p>
+                {ex.exercise?.muscle_group && (
                   <p className="mt-0.5 text-xs uppercase tracking-wide text-muted-foreground">
                     {ex.exercise.muscle_group}
                   </p>

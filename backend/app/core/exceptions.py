@@ -70,6 +70,9 @@ def register_exception_handlers(app: FastAPI) -> None:
             payload = f"{location}: {message}" if location else message
         else:
             payload = "Validation error"
+        # Intentional envelope exception: Pydantic 422 also includes `details`.
+        # Domain errors stay {success, data, error} only. Do not drop `details`
+        # without a deliberate contract change — tests assert this shape.
         return JSONResponse(
             status_code=422,
             content={

@@ -23,6 +23,25 @@ export function hasPrimaryValue(row, primary) {
   return false;
 }
 
+export function shouldPersistSet(row, tracking) {
+  const primaryOk = hasPrimaryValue(row, tracking.primary);
+  if (!row.set_id && !primaryOk) return false;
+  if (primaryOk) return true;
+  return row.weight_kg !== '' && row.weight_kg != null;
+}
+
+export function shouldDeleteSetViaApi(row) {
+  return Boolean(row.set_id);
+}
+
+export function exerciseDisplayName(exercise) {
+  return exercise?.name || 'Unknown exercise';
+}
+
+export function isArchivedExercise(exercise) {
+  return exercise?.is_active === false;
+}
+
 export function setWritePayload(row, tracking) {
   const payload = {};
   const applyMetric = (type) => {

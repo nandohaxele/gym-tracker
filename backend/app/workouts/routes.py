@@ -50,12 +50,6 @@ from app.workouts.schemas import (
 router = APIRouter()
 
 
-# TODO (future): support workout templates -- a separate POST /workouts/templates
-# endpoint that persists a Workout-like record flagged as a template, plus
-# POST /workouts/from-template/{template_id} to clone it into a dated workout
-# for the current day.
-
-
 @router.get("/workouts")
 def list_workouts(
     db: Session = Depends(get_db),

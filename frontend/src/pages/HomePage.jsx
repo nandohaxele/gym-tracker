@@ -1,6 +1,5 @@
 // HomePage - landing screen after auth. Fetches the workout history and renders
 // it with loading / error / empty states. CTA to create a new workout.
-// TODO (Phase 5 Step 3): swap the loading state for list skeletons.
 
 import { Link } from 'react-router-dom';
 import { Dumbbell, Plus, Loader2, AlertCircle, RotateCw } from 'lucide-react';
@@ -58,7 +57,7 @@ export default function HomePage() {
             Try again
           </AppButton>
         </StatusView>
-      ) : workouts.length === 0 ? (
+      ) : (workouts ?? []).length === 0 ? (
         <StatusView
           icon={Dumbbell}
           title="No workouts yet"

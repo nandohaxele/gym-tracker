@@ -12,7 +12,7 @@ import {
 import { showsField } from '@/lib/tracking.js';
 
 const fieldClass =
-  'h-11 w-full rounded-lg border bg-background px-2 text-center text-base text-foreground ' +
+          'h-11 w-full min-w-[3.25rem] rounded-lg border bg-background px-2 text-center text-base text-foreground ' +
   'transition-colors placeholder:text-muted-foreground ' +
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background';
 
@@ -60,7 +60,7 @@ export default function SetRow({
 
   return (
     <div className="flex flex-col gap-1">
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
         <span className="w-5 shrink-0 text-center text-sm font-semibold text-muted-foreground">
           {index + 1}
         </span>

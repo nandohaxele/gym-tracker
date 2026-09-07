@@ -1,3 +1,6 @@
+> **STALE phase numbering.** "Phase 5 Step 3" is the old frontend-era label.
+> Current roadmap: `docs/AI_HANDOFF.md` §8. Phase 7 is complete; Phase 8 is next.
+
 # Gym Tracker Status
 
 ## Completed
