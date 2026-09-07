@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Loader2, AlertCircle, RotateCw } from 'lucide-react';
+import { ArrowLeft, Loader2, AlertCircle, Mic, RotateCw } from 'lucide-react';
 
 import {
   addWorkoutExercise,
@@ -28,6 +28,12 @@ import StatusView from '@/components/ui/StatusView.jsx';
 import AppButton from '@/components/ui/AppButton.jsx';
 import WorkoutForm from '@/components/workouts/WorkoutForm.jsx';
 import SaveAsTemplateDialog from '@/components/workouts/SaveAsTemplateDialog.jsx';
+import VoiceAssistantSheet from '@/components/assistant/VoiceAssistantSheet.jsx';
+import {
+  createdWorkoutId,
+  didFinishSession,
+  shouldReloadSession,
+} from '@/lib/assistant.js';
 
 function sortExercises(exercises = []) {
   return [...exercises].sort((a, b) => a.order_index - b.order_index);
@@ -62,6 +68,8 @@ export default function WorkoutEditorPage() {
   const [serverError, setServerError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const [focusWeId, setFocusWeId] = useState(null);
   const blocksRef = useRef([]);
 
   useEffect(() => {
@@ -302,6 +310,39 @@ export default function WorkoutEditorPage() {
     }
   };
 
+  const openAssistant = (workoutExerciseId = null) => {
+    setFocusWeId(workoutExerciseId);
+    setAssistantOpen(true);
+  };
+
+  const handleAssistantExecuted = async (executeResult) => {
+    const created = createdWorkoutId(executeResult);
+    if (created && String(created) !== String(id)) {
+      navigate(`/workouts/${created}/edit`, { replace: true });
+      return;
+    }
+    if (didFinishSession(executeResult)) {
+      try {
+        const updated = await getWorkout(id);
+        setData(updated);
+        if (updated.ended_at) {
+          navigate(`/workouts/${id}`, { replace: true });
+        }
+      } catch {
+        reload();
+      }
+      return;
+    }
+    if (shouldReloadSession(executeResult)) {
+      try {
+        const updated = await getWorkout(id);
+        setData(updated);
+      } catch {
+        reload();
+      }
+    }
+  };
+
   const selectedLabel = useMemo(
     () => (isActive ? 'Active session' : 'Completed session'),
     [isActive]
@@ -318,10 +359,18 @@ export default function WorkoutEditorPage() {
         >
           <ArrowLeft className="h-5 w-5" aria-hidden="true" />
         </button>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h1 className="text-2xl font-bold tracking-tight">Edit workout</h1>
           <p className="text-xs text-muted-foreground">{selectedLabel}</p>
         </div>
+        <button
+          type="button"
+          onClick={() => openAssistant(null)}
+          aria-label="Voice assistant"
+          className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <Mic className="h-5 w-5" aria-hidden="true" />
+        </button>
       </header>
 
       {loading ? (
@@ -358,6 +407,7 @@ export default function WorkoutEditorPage() {
             onRowCommit={handleRowCommit}
             onRowRemove={handleRowRemove}
             onAddRow={handleAddRow}
+            onAskAssistant={openAssistant}
             onFinish={handleFinish}
             onSaveAsTemplate={() => setSaveOpen(true)}
             isActive={isActive}
@@ -370,6 +420,13 @@ export default function WorkoutEditorPage() {
             workoutName={name}
             onClose={() => setSaveOpen(false)}
             onSaved={(template) => navigate(`/templates/${template.id}`)}
+          />
+          <VoiceAssistantSheet
+            open={assistantOpen}
+            onClose={() => setAssistantOpen(false)}
+            workoutId={id}
+            focusWorkoutExerciseId={focusWeId}
+            onExecuted={handleAssistantExecuted}
           />
         </>
       )}

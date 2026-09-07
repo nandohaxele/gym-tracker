@@ -44,3 +44,21 @@ export function setTheme(theme) {
     /* ignore */
   }
 }
+
+const ASSISTANT_LOCALE_KEY = 'gym.assistantLocale';
+
+export function getAssistantLocale() {
+  try {
+    return localStorage.getItem(ASSISTANT_LOCALE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setAssistantLocale(locale) {
+  try {
+    localStorage.setItem(ASSISTANT_LOCALE_KEY, locale);
+  } catch {
+    /* ignore */
+  }
+}

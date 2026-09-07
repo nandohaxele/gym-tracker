@@ -6,6 +6,7 @@ and PostgreSQL (prod) without code changes - only DATABASE_URL changes.
 
 import json
 from functools import lru_cache
+from typing import Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -37,6 +38,13 @@ class Settings(BaseSettings):
     )
 
     env: str = "development"
+
+    openai_api_key: Optional[str] = Field(default=None, alias="OPENAI_API_KEY")
+    assistant_model: str = "gpt-4o-mini"
+    openai_base_url: str = "https://api.openai.com/v1"
+    assistant_timeout_seconds: float = 20
+    assistant_max_commands: int = 8
+    assistant_rate_limit_per_minute: int = 20
 
     @property
     def cors_origins(self) -> list[str]:

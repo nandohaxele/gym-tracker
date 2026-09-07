@@ -49,6 +49,13 @@ class ConflictError(AppError):
     default_message = "Conflict"
 
 
+class RateLimitError(AppError):
+    """In-process assistant interpret throttle. Single-process only."""
+
+    status_code = 429
+    default_message = "Too many assistant requests"
+
+
 def _envelope(error: str) -> dict:
     return {"success": False, "data": None, "error": error}
 

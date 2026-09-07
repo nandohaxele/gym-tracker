@@ -1,8 +1,9 @@
 // HomePage - landing screen after auth. Fetches the workout history and renders
 // it with loading / error / empty states. CTA to create a new workout.
 
-import { Link } from 'react-router-dom';
-import { Dumbbell, Plus, Loader2, AlertCircle, RotateCw } from 'lucide-react';
+import { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Dumbbell, Mic, Plus, Loader2, AlertCircle, RotateCw } from 'lucide-react';
 
 import useAuth from '@/hooks/useAuth.js';
 import useAsync from '@/hooks/useAsync.js';
@@ -10,14 +11,27 @@ import { listWorkouts } from '@/api/workouts.js';
 import PageContainer from '@/components/ui/PageContainer.jsx';
 import StatusView from '@/components/ui/StatusView.jsx';
 import AppButton, { buttonVariants } from '@/components/ui/AppButton.jsx';
+import VoiceAssistantSheet from '@/components/assistant/VoiceAssistantSheet.jsx';
+import { createdWorkoutId } from '@/lib/assistant.js';
 import { cn } from '@/lib/utils.js';
 import WorkoutList from '@/components/workouts/WorkoutList.jsx';
 
 export default function HomePage() {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const name = user?.email ? user.email.split('@')[0] : 'athlete';
+  const [assistantOpen, setAssistantOpen] = useState(false);
 
   const { data: workouts, error, loading, reload } = useAsync(listWorkouts, []);
+
+  const handleAssistantExecuted = (executeResult) => {
+    const created = createdWorkoutId(executeResult);
+    if (created) {
+      navigate(`/workouts/${created}/edit`, { replace: true });
+      return;
+    }
+    reload();
+  };
 
   return (
     <PageContainer className="flex flex-col gap-6">
@@ -26,16 +40,26 @@ export default function HomePage() {
           <p className="text-sm text-muted-foreground">Welcome back Soldier!</p>
           <h1 className="text-2xl font-bold capitalize tracking-tight">{name}</h1>
         </div>
-        {workouts?.length > 0 && (
-          <Link
-            to="/workouts/new"
-            className={cn(buttonVariants({ size: 'sm' }))}
-            aria-label="New workout"
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setAssistantOpen(true)}
+            aria-label="Voice assistant"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <Plus className="h-4 w-4" aria-hidden="true" />
-            New
-          </Link>
-        )}
+            <Mic className="h-5 w-5" aria-hidden="true" />
+          </button>
+          {workouts?.length > 0 && (
+            <Link
+              to="/workouts/new"
+              className={cn(buttonVariants({ size: 'sm' }))}
+              aria-label="New workout"
+            >
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              New
+            </Link>
+          )}
+        </div>
       </header>
 
       {loading ? (
@@ -71,6 +95,12 @@ export default function HomePage() {
       ) : (
         <WorkoutList workouts={workouts} />
       )}
+
+      <VoiceAssistantSheet
+        open={assistantOpen}
+        onClose={() => setAssistantOpen(false)}
+        onExecuted={handleAssistantExecuted}
+      />
     </PageContainer>
   );
 }

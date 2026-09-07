@@ -14,12 +14,14 @@
 > **Phase 5 — Granular Session/Set APIs: COMPLETED** (§2.13) ·
 > **Phase 6 — Frontend adaptation: COMPLETED** (§2.14) ·
 > **Phase 7 — Stabilization & Tests: COMPLETED** (§2.15) ·
-> **Phase 8 — AI Readiness: COMPLETED** (§2.16).
+> **Phase 8 — AI Readiness: COMPLETED** (§2.16) ·
+> **Phase 9 — Voice Assistant: COMPLETED** (§2.17).
 > Alembic owns schema evolution: baseline **`f3f47238398b`**, head **`0153e917bf85`**.
-> No Phase 6/7/8 migration. Runtime SQLite `PRAGMA foreign_keys=ON` is enabled
+> No Phase 6/7/8/9 migration. Runtime SQLite `PRAGMA foreign_keys=ON` is enabled
 > in `app/core/database.py` (`make_engine`); Alembic stays FK-off.
 > Backend pytest + frontend Vitest + `npm run build` are the gates.
-> **Next task: Phase 9 — Voice Assistant** (§7). Do not start it here.
+> Planned roadmap is complete. Remaining work is unscheduled product follow-up
+> (§9 / §2.17 future). This is **not** a production-readiness claim.
 >
 > This document deliberately records **no commit hash**. Git is the source of truth for revision
 > history — run `git log`/`git status` if you need it. Describe state semantically here so this file
@@ -69,7 +71,7 @@ first-class concern.
 | Components | Hand-rolled primitives in shadcn *style*; the shadcn CLI is **not** installed. Icons via `lucide-react` |
 | Routing | `react-router-dom` 6.26.2 |
 | Forms | React Hook Form 7.53 + Zod 3.23 |
-| Tests | **Vitest 2.1** — `frontend/src/lib/tracking.test.js` (draft vs recorded, persist guards, set 38). `npm test` + `npm run build`. No Playwright. |
+| Tests | **Vitest 2.1** — `tracking.js`, `speech.js`, `assistant.js`. `npm test` + `npm run build`. No Playwright. |
 | HTTP | Axios 1.7, single client with interceptors |
 | State | React Context (`AuthContext`, `ThemeContext`) |
 | Path alias | `@` → `frontend/src` (configured in both `vite.config.js` and `jsconfig.json`) |
@@ -304,7 +306,9 @@ Working features:
   (name + primary tracking + optional extras / muscle group).
 - **UI primitives**: `AppButton`, `AppInput`, `AuthCard`, `PageContainer`, `LoadingScreen`,
   `StatusView` (empty/error states), `Modal`, `Label`.
-- **Hooks**: `useAuth`, `useTheme`, `useAsync`, `useRestTimer`.
+- **Voice assistant (Phase 9):** mic on Session editor + Home; `VoiceAssistantSheet`
+  with typed fallback; Web Speech API one-shot recognition (`it-IT` / `en-US`).
+- **Hooks**: `useAuth`, `useTheme`, `useAsync`, `useSpeechRecognition`.
 
 **NOT implemented / not wired:** rest timer (deleted in Phase 7 — was unwired),
 archive/restore UI, statistics/charts, profile/settings page, offline
@@ -348,6 +352,8 @@ PATCH  /api/templates/{template_id}
 DELETE /api/templates/{template_id}
 POST   /api/templates/{template_id}/personalize
 POST   /api/templates/{template_id}/start
+POST   /api/assistant/interpret
+POST   /api/assistant/execute
 ```
 
 That is the complete list. All responses use the `{success, data, error}` envelope.
@@ -366,8 +372,8 @@ ambiguous reject), Session clocks + complete idempotency, UTC helpers,
 Template Start/independence/save-as-template, last-weights scoping, Alembic
 fresh-head + defensive downgrade, Pydantic 422 `details` exception, runtime FK.
 
-**Frontend:** `npm test` → Vitest on `tracking.js` (draft rows, persist/delete
-guards, conversions, set 38 line). `npm run build` stays a gate.
+**Frontend:** `npm test` → Vitest on `tracking.js`, `speech.js`, `assistant.js`.
+`npm run build` stays a gate.
 
 **CI:** `.github/workflows/ci.yml` runs backend pytest, frontend test, frontend
 build. No Playwright, no live DB.
@@ -880,6 +886,112 @@ guesses (latest Session, last Exercise, etc.).
 
 New: `test_exercise_resolve.py`, `test_template_resolve.py`,
 `test_active_sessions.py`, `test_commands.py`. Isolated temp SQLite only.
+
+## 2.17 Voice Assistant — IMPLEMENTED (Phase 9, COMPLETED)
+
+No migration. Head remains `0153e917bf85`. No assistant tables, no transcript
+storage, no conversation memory. Live `gym.db` is not written by tests.
+
+### Pipeline
+
+```
+voice / typed text
+  → Web Speech API (browser) or typed fallback
+  → POST /api/assistant/interpret  (auth, no write)
+  → OpenAI Responses Structured Outputs (server-side)
+  → Pydantic ProviderInterpretation
+  → Phase 8 command models + read-only resolvers
+  → preview / clarification / confirmation
+  → POST /api/assistant/execute
+  → execute_command → existing services
+```
+
+The assistant never accesses the DB for writes, never invents Exercise /
+Template ids, and never bypasses ownership or ambiguity.
+
+### Speech
+
+Primary STT is the browser Web Speech API (`SpeechRecognition` /
+`webkitSpeechRecognition`), `continuous = false`, final transcript only.
+Languages: `it-IT` and `en-US` (localStorage `gym.assistantLocale`; Italian
+default unless the browser language is English).
+
+The assistant sheet **always** has a typed input. Missing API, denied mic,
+or LAN HTTP (no secure context) → type-only mode. Manual editor controls
+stay usable.
+
+**Galaxy S21 microphone testing requires a trusted HTTPS origin** (production
+deploy or a locally trusted cert). The existing Vite LAN `http://<ip>:5173`
+setup is enough for typed assistant + manual entry. A self-signed Vite HTTPS
+plugin was **not** added — it would not be trusted on the phone. Real mic
+acceptance is still a **manual** checklist (§2.17 below); it has not been
+run in this implementation session.
+
+### Provider
+
+`AssistantProvider.interpret(text, context)` with one implementation:
+`OpenAIResponsesProvider` via **httpx** (no LangChain).
+
+| Setting | Env | Default |
+|---|---|---|
+| API key | `OPENAI_API_KEY` | empty → interpret `unavailable` |
+| Model | `ASSISTANT_MODEL` | `gpt-4o-mini` |
+| Base URL | `OPENAI_BASE_URL` | `https://api.openai.com/v1` |
+| Timeout | `ASSISTANT_TIMEOUT_SECONDS` | 20 |
+| Max commands | `ASSISTANT_MAX_COMMANDS` | 8 |
+| Interpret rate | `ASSISTANT_RATE_LIMIT_PER_MINUTE` | 20 (in-process, per user) |
+
+Keys never go to the frontend (`VITE_*` unused). Responses use
+`text.format.type = json_schema` + `strict = true`. Schema is derived from
+`ProviderInterpretation` (`app/assistant/schema.py`). One retry on malformed
+structured output only. Provider errors return controlled messages; raw
+bodies/headers/keys are not logged or returned.
+
+### HTTP
+
+`POST /api/assistant/interpret` — `{ text, workout_id?, focus_workout_exercise_id?, locale? }`.
+Read-only. Builds request-scoped context (Session WEs + last persisted Set,
+catalog **names/synonyms**, template names). Preflights `resolve_exercise` /
+`resolve_template` / 0-1-many actives. Statuses:
+`ready | needs_clarification | unknown | unavailable | error`.
+
+`POST /api/assistant/execute` — `{ commands: [...] }` Phase 8-compatible
+payloads. No LLM. Revalidates Pydantic, calls `execute_command` in order.
+Stops on first error/clarification. After `AddExercise`, following
+`RecordSet`s that target the same new exercise bind to the returned WE id.
+
+### Confirmation / incremental / compound
+
+- Immediate after submit: `AddExercise`, `RecordSet`.
+- Confirm: `CreateSession`, `StartTemplate`, `FinishSession`.
+- No voice delete/remove.
+- Compound = capped ordered Phase 8 list (default max 8).
+- Incremental (`same weight`, `+5 kg`) uses the last **persisted** Set on the
+  focused or uniquely identified WE. NULL weight is not 0.
+
+### Frontend
+
+`VoiceAssistantSheet` (existing `Modal`). Primary mic on
+`/workouts/:id/edit`; optional per-exercise focus mic; secondary mic on Home.
+Not in BottomNav. Create/Start navigates to `/workouts/{id}/edit`. Finish
+follows the existing editor path to Session detail.
+
+### Tests
+
+`backend/tests/test_assistant.py` mocks provider HTTP (`httpx.MockTransport`).
+Never calls live OpenAI. Frontend: `speech.test.js`, `assistant.test.js`.
+
+### Manual Galaxy S21 checklist (pending unless run on-device)
+
+1. Trusted HTTPS origin
+2. Open active Session editor
+3. Allow microphone
+4. Say "aggiungi panca piana" → Exercise added
+5. Say a valid Set command → Set persisted
+6. "stesso peso" copies last persisted weight
+7. Finish → confirmation → Completed
+8. Deny mic → typed assistant still works
+9. Manual Add exercise / Set / Finish still work
 
 ---
 
@@ -1654,10 +1766,15 @@ internal `app/commands` executor that calls existing services only. No
 migration, no LLM/provider, no voice, no frontend. Full detail in **§2.16**.
 Do not redo this work.
 
-## The next task is: PHASE 9 — Voice Assistant.
+## ✅ PHASE 9 — Voice Assistant: **COMPLETED**
 
-Do not start Phase 9 in this change. Phase 9 is speech-to-text / voice UX and
-(only then) natural-language mapping onto these primitives.
+Delivered: Web Speech API + typed fallback, `POST /api/assistant/interpret`
+and `/execute`, OpenAI Responses Structured Outputs, Phase 8 execution
+boundary, Session context, confirmation/clarification, compound/incremental
+rules, in-process interpret rate limit. No migration. Full detail in
+**§2.17**. Do not redo this work.
+
+The planned 1–9 roadmap is complete. Unscheduled follow-up is in **§9**.
 
 ---
 
@@ -1676,7 +1793,7 @@ Do not start Phase 9 in this change. Phase 9 is speech-to-text / voice UX and
 | **Phase 6** | Frontend adaptation to the new domain and APIs | ✅ **COMPLETED** (§2.14) |
 | **Phase 7** | Stabilization & Tests | ✅ **COMPLETED** (§2.15) |
 | **Phase 8** | AI Readiness | ✅ **COMPLETED** (§2.16) |
-| **Phase 9** | Voice Assistant | ← **NEXT** |
+| **Phase 9** | Voice Assistant | ✅ **COMPLETED** (§2.17) |
 
 Each phase should be a self-contained, reviewable change with its own migration(s). Do not run ahead.
 
@@ -1686,10 +1803,10 @@ Each phase should be a self-contained, reviewable change with its own migration(
 
 Explicitly out of scope until the corresponding phase is reached:
 
-- **No LLM / provider integration.** Phase 8 added deterministic resolvers and
-  commands only. Do not add OpenAI/Anthropic/Gemini SDKs, LangChain/LangGraph,
-  prompts, or API keys until a later explicit instruction (Phase 9 or after).
-- **No voice implementation.** No speech-to-text, no voice logging UI (Phase 9).
+- **No extra AI surface.** Phase 9 added one OpenAI Responses provider and
+  interpret/execute only. Do not add LangChain/LangGraph, agents, server STT,
+  Whisper, long-term memory, or a second provider without a new instruction.
+- **No voice deletes.** Phase 8 has no remove/delete commands.
 - **No unnecessary metadata or taxonomy expansion.** Do not add equipment/movement-pattern/difficulty
   lookup tables, tag systems, or muscle-group taxonomies "while we're here" (§4.8).
 - **No exercise media implementation yet.** No images, no video, no thumbnails, no file uploads or
@@ -1699,7 +1816,8 @@ Explicitly out of scope until the corresponding phase is reached:
   (§6, §5.13).
 - **No Alembic `PRAGMA foreign_keys=ON`.** Runtime app connections already enable it (§2.15).
   Leave `alembic/env.py` FK-off.
-- **No voice / chatbot / microphone UI** until Phase 9. HTTP resolvers exist (§2.16).
+- **No BottomNav microphone, PWA/offline voice, WebSockets/SSE, coaching,
+  nutrition, wearables, or analytics.** The Phase 9 sheet is the voice UI.
 - **No RPE/RIR/`set_type` UI, archive/restore UI, rest timer, reorder UI, pagination.**
 - **No broad refactor unrelated to the active phase.** In particular, do **not**:
   migrate models to SQLAlchemy 2.0 `Mapped[]` style, introduce TypeScript, restructure folders,
@@ -1746,7 +1864,7 @@ gym-tracker-app/
 │   └── app/
 │       ├── main.py              # app factory; router mounting under /api (NO create_all)
 │       ├── core/
-│       │   ├── config.py        # pydantic-settings; DATABASE_URL, JWT_*, CORS_ORIGINS
+│       │   ├── config.py        # pydantic-settings; DATABASE_URL, JWT_*, CORS, OPENAI_*
 │       │   ├── utc.py           # UtcDateTime + utc_now / date_midnight_utc / serialize_utc
 │       │   ├── database.py      # make_engine + runtime PRAGMA foreign_keys=ON
 │       │   ├── dependencies.py  # get_current_user
@@ -1760,6 +1878,7 @@ gym-tracker-app/
 │       ├── templates/           # models(Template, TemplateExercise) schemas service routes
 │       ├── commands/            # Phase 8: CreateSession/AddExercise/RecordSet/Finish/StartTemplate
 │       │                        #   + execute_command (calls existing services only)
+│       ├── assistant/           # Phase 9: interpret/execute above Phase 8 (no ORM writes)
 │       └── seed/                # exercises_seed.py (23 globals w/ slug + tracking + aliases)
 │                                #   + seeder.py (idempotent, keyed by slug)
 └── frontend/
@@ -1768,7 +1887,7 @@ gym-tracker-app/
     └── src/
         ├── main.jsx / App.jsx
         ├── api/                 # axiosClient.js (envelope unwrap + 401 event), auth, exercises,
-        │                        #   workouts, templates, sets.js (Phase 5 granular URLs)
+        │                        #   workouts, templates, sets.js, assistant.js
         ├── context/             # AuthContext.jsx, ThemeContext.jsx
         ├── routes/              # AppRoutes.jsx, ProtectedRoute.jsx, PublicRoute.jsx
         ├── components/
@@ -1776,10 +1895,11 @@ gym-tracker-app/
         │   ├── ui/              # AppButton, AppInput, AuthCard, PageContainer, LoadingScreen,
         │   │                    #   StatusView, Modal, Label, ThemeToggle, (Button/Input = DEAD)
         │   ├── auth/            # LoginForm, RegisterForm
-        │   └── workouts/        # WorkoutList, WorkoutCard, WorkoutForm, ExerciseFieldCard,
-        │                        #   SetRow, ExercisePicker, RestTimer (UNWIRED)
+        │   ├── workouts/        # WorkoutList, WorkoutCard, WorkoutForm, ExerciseFieldCard,
+        │   │                    #   SetRow, ExercisePicker
+        │   └── assistant/       # VoiceAssistantSheet (Phase 9)
         ├── pages/               # Home, Login, Register, WorkoutEditor, WorkoutDetail, NotFound
-        ├── hooks/               # useAuth, useTheme, useAsync, useRestTimer
+        ├── hooks/               # useAuth, useTheme, useAsync, useSpeechRecognition
         ├── lib/                 # utils.js (cn), validators.js (Zod schemas)
         ├── utils/               # format.js (formatDate, formatWeight, toDateInputValue), storage.js
         └── styles/global.css    # Tailwind + shadcn-style CSS variables
@@ -1796,7 +1916,7 @@ gym-tracker-app/
 | Phase 5 — Granular Session/Set APIs (done) | `backend/app/workouts/{service,routes,models,schemas}.py`, §2.13, §4.6 / §4.7 |
 | Phase 7 — Tests (done) | `backend/tests/`, `frontend/src/lib/tracking.test.js`, §2.15 |
 | Phase 8 — AI Readiness (done) | `app/exercises/service.py::resolve_exercise`, `app/templates/service.py::resolve_template`, `app/workouts/service.py::list_active_workouts`, `app/commands/`, §2.16 |
-| Phase 9 — Voice Assistant (**next**) | §2.16 primitives, §9 |
+| Phase 9 — Voice Assistant (done) | `app/assistant/`, `frontend/src/lib/speech.js`, §2.17 |
 | Response/error conventions | `backend/app/core/response.py`, `backend/app/core/exceptions.py` |
 | Frontend API layer | `frontend/src/api/axiosClient.js` |
 | Frontend validation | `frontend/src/lib/validators.js` |
@@ -1948,5 +2068,5 @@ stale the moment anything is committed. Describe state semantically — by phase
 id, by what was verified — so this document only changes when the *project state* changes, not when
 the repository does.
 
-**Last verified:** 2026-09-07, after Phase 8 (AI Readiness) completed.
-Locked decisions in §4 were **not** touched. Next is Phase 9 — Voice Assistant.
+**Last verified:** 2026-09-07, after Phase 9 (Voice Assistant) completed.
+Locked decisions in §4 were **not** touched. Planned phases 1–9 are done.

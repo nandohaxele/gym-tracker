@@ -43,6 +43,7 @@ def create_app() -> FastAPI:
     # Schema creation is owned by Alembic, not by the app. Run
     # `alembic upgrade head` from backend/ before starting the server.
 
+    from app.assistant.routes import router as assistant_router
     from app.auth.routes import router as auth_router
     from app.exercises.routes import router as exercises_router
     from app.templates.routes import router as templates_router
@@ -52,6 +53,9 @@ def create_app() -> FastAPI:
     app.include_router(exercises_router, prefix="/api/exercises", tags=["exercises"])
     app.include_router(templates_router, prefix="/api", tags=["templates"])
     app.include_router(workouts_router, prefix="/api", tags=["workouts"])
+    app.include_router(
+        assistant_router, prefix="/api/assistant", tags=["assistant"]
+    )
 
     register_exception_handlers(app)
 

@@ -36,6 +36,7 @@ export default function WorkoutForm({
   onRowCommit,
   onRowRemove,
   onAddRow,
+  onAskAssistant,
   onFinish,
   onSaveAsTemplate,
   isActive,
@@ -128,6 +129,11 @@ export default function WorkoutForm({
                 rows={block.rows}
                 plannedHint={formatPlannedHint(block)}
                 busy={busy}
+                onAskAssistant={
+                  onAskAssistant
+                    ? () => onAskAssistant(block.workout_exercise_id)
+                    : undefined
+                }
                 onRowChange={(setIndex, patch) =>
                   onRowChange(block.workout_exercise_id, setIndex, patch)
                 }

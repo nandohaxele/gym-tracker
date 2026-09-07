@@ -1,6 +1,6 @@
 // ExerciseFieldCard - one Session exercise with recorded Sets + client drafts.
 
-import { Plus, X } from 'lucide-react';
+import { Mic, Plus, X } from 'lucide-react';
 import AppButton from '@/components/ui/AppButton.jsx';
 import SetRow from './SetRow.jsx';
 import {
@@ -19,6 +19,7 @@ export default function ExerciseFieldCard({
   onRowRemove,
   onAddRow,
   onRemoveExercise,
+  onAskAssistant,
   busy = false,
 }) {
   const tracking = trackingOf(exercise);
@@ -45,15 +46,28 @@ export default function ExerciseFieldCard({
             <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
           )}
         </div>
-        <button
-          type="button"
-          onClick={onRemoveExercise}
-          disabled={busy}
-          aria-label={`Remove ${exerciseDisplayName(exercise)}`}
-          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <X className="h-4 w-4" aria-hidden="true" />
-        </button>
+        <div className="flex shrink-0 items-center gap-1">
+          {onAskAssistant ? (
+            <button
+              type="button"
+              onClick={onAskAssistant}
+              disabled={busy}
+              aria-label={`Voice command for ${exerciseDisplayName(exercise)}`}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <Mic className="h-4 w-4" aria-hidden="true" />
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={onRemoveExercise}
+            disabled={busy}
+            aria-label={`Remove ${exerciseDisplayName(exercise)}`}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-col gap-2">
